@@ -674,6 +674,89 @@
   }
   const wins_ = (rec) => wins(rec);
 
+  /* ============================== trades & pickups ============================== */
+
+  function pageTrades(yArg) {
+    return loadMany(["moves"]).then((d) => {
+      const mv = d.moves.filter((r) => r.Player && r.Manager);
+      const yrs = uniq(mv.map((r) => r.Year)).filter(isNum).sort((a, b) => b - a);
+      const yr = yrs.includes(yArg) ? yArg : "All";
+      const inYr = yr === "All" ? mv : mv.filter((r) => r.Year === yr);
+      const val = (r) => num(r.Value) || 0;
+      const valTxt = (v) => '<span class="' + (v > 0 ? "pos" : v < 0 ? "neg" : "") + '">' + signed(v) + "</span>";
+
+      /* group traded players into trades: same year + week + the same two managers */
+      const trades = {};
+      inYr.filter((r) => r["How Acquired"] === "Trade" && r.From).forEach((r) => {
+        const pair = [r.Manager, r.From].sort();
+        const k = r.Year + "|" + r["First Week"] + "|" + pair.join("|");
+        const t = trades[k] = trades[k] || { y: r.Year, w: r["First Week"], a: pair[0], b: pair[1], got: {} };
+        (t.got[r.Manager] = t.got[r.Manager] || []).push(r);
+      });
+      const tradeList = Object.values(trades).sort((x, z) => (z.y - x.y) || (z.w - x.w));
+      const sideTotal = (t, m) => (t.got[m] || []).reduce((s, r) => s + val(r), 0);
+
+      const tradeCard = (t) => {
+        const va = sideTotal(t, t.a), vb = sideTotal(t, t.b);
+        const winner = va > vb ? t.a : vb > va ? t.b : null;
+        const side = (m, v) => '<div class="trade-side' + (winner === m ? " won" : "") + '"><div class="trade-who">' + link("career/" + enc(m), m) +
+          '<span class="trade-val">' + valTxt(v) + "</span></div><ul>" +
+          ((t.got[m] || []).map((r) => "<li><span>" + esc(r.Player) + ' <span class="muted">' + esc(r.Pos || "") + '</span></span><span class="mono">' +
+            fmt(r["Started Pts"], 1) + " pts · " + valTxt(val(r)) + "</span></li>").join("") || '<li class="muted">Nothing tracked</li>') + "</ul></div>";
+        return '<article class="trade"><div class="game-label">' + esc(t.y) + " · Week " + esc(t.w) +
+          (winner ? " · " + esc(winner) + " won by " + Math.abs(va - vb).toFixed(1) : " · Even") + "</div>" +
+          '<div class="trade-body">' + side(t.a, va) + side(t.b, vb) + "</div></article>";
+      };
+
+      /* per-manager summary */
+      const ms = uniq(mv.map((r) => r.Manager)).sort();
+      const summary = ms.map((m) => {
+        let tw = 0, tl = 0, net = 0;
+        tradeList.forEach((t) => {
+          if (t.a !== m && t.b !== m) return;
+          const o = t.a === m ? t.b : t.a;
+          const mine = sideTotal(t, m), theirs = sideTotal(t, o);
+          net += mine - theirs;
+          if (mine > theirs) tw++; else if (theirs > mine) tl++;
+        });
+        const wv = inYr.filter((r) => r.Manager === m && r["How Acquired"] === "Waiver");
+        const dr = inYr.filter((r) => r.Manager === m && r["How Acquired"] === "Draft");
+        return { m: m, trades: tw + tl, tw: tw, tl: tl, net: net, adds: wv.length,
+          wval: wv.reduce((s, r) => s + val(r), 0), dval: dr.reduce((s, r) => s + val(r), 0) };
+      });
+
+      const topList = (how, n) => inYr.filter((r) => r["How Acquired"] === how).sort((a, b) => val(b) - val(a)).slice(0, n);
+      const moveCols = [
+        { key: "Player", label: "Player", cls: "name" },
+        { key: "Pos", label: "Pos" },
+        { key: "Manager", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.Manager), r.Manager) },
+        { key: "Year", label: "Year", num: true },
+        { key: "First Week", label: "Added Wk", num: true },
+        { key: "Starts", label: "Starts", num: true },
+        { key: "Started Pts", label: "Started Pts", num: true, render: (r) => fmt(r["Started Pts"], 1) },
+        { key: "PPG", label: "PPG", num: true, render: (r) => fmt(r.PPG) },
+        { key: "Value", label: "Value", num: true, render: (r) => valTxt(val(r)) },
+      ];
+
+      return '<div class="hero"><span class="kicker">Transactions</span><h1>Trades &amp; pickups</h1></div>' +
+        chips(["All"].concat(yrs), yr, (y) => (y === "All" ? "trades" : "trades/" + y)) +
+        '<p class="note"><b>Value</b> = points a player scored as a starter, minus what a typical bench player at his position would have scored in the same starts. Trades are won by the side whose new players added more Value. Theme-team weeks don’t count.</p>' +
+        section("Manager scorecard", table("tr-sum-" + yr, [
+          { key: "m", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.m), r.m) },
+          { key: "trades", label: "Trades", num: true, sortVal: (r) => r.trades, render: (r) => r.trades },
+          { key: "tw", label: "Trade W-L", num: true, sortVal: (r) => r.tw - r.tl, render: (r) => r.tw + "-" + r.tl },
+          { key: "net", label: "Net Trade Value", num: true, sortVal: (r) => r.net, render: (r) => valTxt(r.net) },
+          { key: "adds", label: "Pickups", num: true, sortVal: (r) => r.adds, render: (r) => r.adds },
+          { key: "wval", label: "Pickup Value", num: true, sortVal: (r) => r.wval, render: (r) => valTxt(r.wval) },
+          { key: "dval", label: "Draft Value", num: true, sortVal: (r) => r.dval, render: (r) => valTxt(r.dval) },
+        ], summary, { sortKey: "net" })) +
+        section("Trades", tradeList.length ? '<div class="trades">' + tradeList.map(tradeCard).join("") + "</div>" : '<p class="note">No trades found.</p>',
+          tradeList.length + " trade" + (tradeList.length === 1 ? "" : "s")) +
+        section("Best waiver pickups", table("tr-wv-" + yr, moveCols, topList("Waiver", 15), { sortKey: "Value" })) +
+        section("Best draft values", table("tr-dr-" + yr, moveCols.filter((c) => c.key !== "First Week"), topList("Draft", 10), { sortKey: "Value" }));
+    });
+  }
+
   /* ============================== game log ============================== */
 
   function pageGames(yArg, wArg) {
@@ -764,6 +847,7 @@
     else if (name === "rankings") p = pageRankings();
     else if (name === "games") p = pageGames(parts[1], parts[2]);
     else if (name === "records") p = pageRecords();
+    else if (name === "trades") p = pageTrades(parts[1]);
     else if (name === "game") p = pageGame(parts[1], parts[2], parts[3], parts[4]);
     else p = pageHome();
     if (!app.innerHTML) app.innerHTML = '<div class="state">Loading…</div>';

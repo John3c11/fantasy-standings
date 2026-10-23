@@ -228,3 +228,19 @@ table.records td.rec-val { color: var(--amber); font-size: 20px; white-space: no
 table.records td.detail { color: var(--chalk-dim); min-width: 220px; }
 table.records td.when { white-space: nowrap; font-family: var(--mono); font-size: 16px; }
 table.records tr.first td { border-top: 3px solid var(--chalk); }
+
+/* ---------- trades ---------- */
+.mono { font-family: var(--mono); }
+.trades { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); gap: 16px; }
+.trade { background: #111311; border: 3px solid var(--chalk); display: flex; flex-direction: column; }
+.trade-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 560px) { .trade-body { grid-template-columns: minmax(0, 1fr); } }
+.trade-side { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.trade-side + .trade-side { border-left: 2px solid var(--line); }
+@media (max-width: 560px) { .trade-side + .trade-side { border-left: 0; border-top: 2px solid var(--line); } }
+.trade-side.won { background: rgba(255, 176, 0, 0.10); }
+.trade-who { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 22px; font-weight: 800; text-transform: uppercase; }
+.trade-who a { text-decoration: none; }
+.trade-val { font-family: var(--mono); font-size: 20px; }
+.trade ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.trade li { display: flex; justify-content: space-between; gap: 10px; font-size: 17px; flex-wrap: wrap; }
