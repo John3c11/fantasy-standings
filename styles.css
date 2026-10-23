@@ -136,12 +136,19 @@ th.sortable button {
   all: unset;
   cursor: pointer;
   display: block;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: inherit;
   padding: 10px 12px;
   min-height: 24px;
 }
 th.sortable button:focus-visible { outline: 3px solid var(--amber); }
 th.sorted button::after { content: " ▾"; }
 th.sorted.asc button::after { content: " ▴"; }
+/* on right-aligned number columns, put the arrow on the left so the label stays flush with the numbers */
+th.num.sorted button::after { content: none; }
+th.num.sorted button::before { content: "▾ "; }
+th.num.sorted.asc button::before { content: "▴ "; }
 td { padding: 9px 12px; border-top: 2px solid var(--line); white-space: nowrap; }
 td.num, th.num { text-align: right; }
 td.num { font-family: var(--mono); }
