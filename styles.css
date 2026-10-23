@@ -161,7 +161,8 @@ tr.last td { background: rgba(122, 31, 31, 0.45); }
 
 /* ---------- scoreboard ---------- */
 .scores { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-.game { background: #111311; border: 3px solid var(--chalk); display: flex; flex-direction: column; }
+.game { background: #111311; border: 3px solid var(--chalk); display: flex; flex-direction: column; text-decoration: none; color: var(--chalk); }
+a.game:hover { border-color: var(--amber); color: var(--chalk); }
 .game-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; }
 .game-row + .game-row { border-top: 2px solid var(--line); }
 .game-row .who { font-weight: 700; font-size: 20px; text-transform: uppercase; letter-spacing: 0.04em; }
@@ -199,3 +200,23 @@ tr.last td { background: rgba(122, 31, 31, 0.45); }
 
 .state { padding: 40px 0; text-align: center; font-size: 22px; letter-spacing: 0.08em; text-transform: uppercase; }
 .state.err { color: var(--loss); text-transform: none; letter-spacing: 0; font-size: 18px; }
+
+/* ---------- box score ---------- */
+.weeks .chip { padding: 6px 10px; font-size: 15px; }
+.box-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+@media (max-width: 900px) { .box-grid { grid-template-columns: minmax(0, 1fr); } }
+.box-side { display: flex; flex-direction: column; gap: 10px; }
+.box-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: #111311; border: 3px solid var(--chalk); padding: 10px 16px; }
+.box-side.won .box-head { border-color: var(--amber); }
+.box-name { font-size: 28px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; text-decoration: none; }
+.box-score { font-family: var(--mono); font-size: 38px; color: var(--chalk-dim); }
+.box-side.won .box-score { color: var(--amber); }
+.box-proj { font-size: 15px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--chalk-dim); }
+.box-extra { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--chalk-dim); }
+.box-extra b { font-family: var(--mono); color: var(--chalk); font-weight: 400; }
+table.box td { white-space: normal; }
+table.box td.slot { font-weight: 700; width: 92px; white-space: nowrap; }
+table.box td.player { font-weight: 700; }
+table.box tr.bench td { color: var(--chalk-dim); }
+table.box tr.divider td { background: rgba(122, 31, 31, 0.55); color: var(--chalk); font-size: 13px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; padding: 5px 12px; }
+table.box tr.bench td.hotbench { color: var(--amber); font-weight: 700; }

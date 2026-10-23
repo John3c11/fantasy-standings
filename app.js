@@ -166,9 +166,24 @@
     const a = num(g["P1 Points"]), b = num(g["P2 Points"]);
     const row = (who, pts, won) => '<div class="game-row' + (won ? " won" : "") + '"><span class="who">' + esc(who) +
       '</span><span class="pts">' + pts.toFixed(2) + "</span></div>";
-    return '<div class="game">' + (label ? '<div class="game-label">' + esc(label) + "</div>" : "") +
-      row(g["Player 1"], a, a > b) + row(g["Player 2"], b, b > a) + "</div>";
+    return '<a class="game" href="#/game/' + gameRoute(g.Year, g.Week, g["Player 1"], g["Player 2"]) + '" aria-label="Box score: ' +
+      esc(g["Player 1"]) + " vs " + esc(g["Player 2"]) + '">' + (label ? '<div class="game-label">' + esc(label) + "</div>" : "") +
+      row(g["Player 1"], a, a > b) + row(g["Player 2"], b, b > a) + "</a>";
   }
+
+  function gameRoute(y, w, a, b) { return [y, w, a, b].map(enc).join("/"); }
+
+  /* playoff labels -> the NFL week their rosters live in */
+  function rosterWeek(w) {
+    const t = String(w).toLowerCase().trim();
+    if (/^\d+$/.test(t)) return +t;
+    const n = +(t.match(/\d+/) || [0])[0];
+    if (/3rd/.test(t)) return 17;
+    if (/5th/.test(t)) return 16;
+    return 14 + n;
+  }
+
+  function weekSortKey(w) { return rosterWeek(w) * 10 + (/round/i.test(w) ? 0 : /3rd|5th/i.test(w) ? 1 : 2); }
 
   /* ============================== elo ============================== */
 
@@ -478,6 +493,7 @@
             { key: "Points", label: a, num: true, render: (r) => fmt(r.Points) },
             { key: "Opp Points", label: b, num: true, render: (r) => fmt(r["Opp Points"]) },
             { key: "Win", label: "Winner", cls: "name", render: (r) => (num(r.Win) === 1 ? esc(a) : num(r.Loss) === 1 ? esc(b) : "Tie") },
+            { key: "box", label: "", sortVal: () => 0, render: (r) => link("game/" + gameRoute(r.Year, r.Week, a, b), "Box score") },
           ], g, { sortKey: "Year" }) + link("rivalries", "← Back to the grid")));
         return html.join("");
       }
@@ -506,6 +522,79 @@
       section("History", eloChart(d.elo)));
   }
 
+  /* ============================== game log ============================== */
+
+  function pageGames(yArg, wArg) {
+    return loadMany(["games"]).then((d) => {
+      const played = playedGames(d.games);
+      const yrs = uniq(played.map((g) => g.Year)).sort((a, b) => b - a);
+      const yr = yrs.includes(yArg) ? yArg : yrs[0];
+      const inYear = played.filter((g) => g.Year === yr);
+      const weeks = uniq(inYear.map((g) => g.Week)).sort((a, b) => weekSortKey(a) - weekSortKey(b));
+      const wk = weeks.includes(wArg) ? wArg : weeks[weeks.length - 1];
+      const games = inYear.filter((g) => g.Week === wk);
+      const label = (w) => (isRegularWeek(w) ? "Wk " + w : w);
+      return '<div class="hero"><span class="kicker">Game log</span><h1>' + esc(yr) + " · " + esc(isRegularWeek(wk) ? "Week " + wk : wk) + "</h1></div>" +
+        chips(yrs, yr, (y) => "games/" + y) +
+        '<div class="chips weeks">' + weeks.map((w) =>
+          '<a class="chip' + (w === wk ? " on" : "") + '" href="#/games/' + enc(yr) + "/" + enc(w) + '"' + (w === wk ? ' aria-current="page"' : "") + ">" + esc(label(w)) + "</a>").join("") + "</div>" +
+        '<p class="note">Tap a game for both lineups.</p>' +
+        '<div class="scores">' + games.map((g) => scoreCard(g)).join("") + "</div>";
+    });
+  }
+
+  const SLOT_ORDER = ["QB", "WR", "RB", "TE", "W/R/T", "K", "DEF", "BN", "IR"];
+
+  function pageGame(y, w, a, b) {
+    return loadMany(["games", "rosters", "positions", "lineups"]).then((d) => {
+      const g = playedGames(d.games).find((x) => x.Year === y && x.Week === w &&
+        ((x["Player 1"] === a && x["Player 2"] === b) || (x["Player 1"] === b && x["Player 2"] === a)));
+      if (!g) return '<div class="state">Game not found.</div>';
+      const p1 = g["Player 1"], p2 = g["Player 2"];
+      const s1 = num(g["P1 Points"]), s2 = num(g["P2 Points"]);
+      const rw = rosterWeek(w);
+      const posOf = {};
+      d.positions.forEach((r) => { if (r.Player) posOf[r.Player] = r["Final Pos"] || r["Derived Pos"]; });
+      const lu = (m) => d.lineups.find((r) => r.Year === y && +r.Week === rw && r.Manager === m);
+
+      function side(m, score, won) {
+        const rows = d.rosters.filter((r) => r.Year === y && +r.Week === rw && r.Manager === m);
+        rows.forEach((r, i) => (r._i = i));
+        rows.sort((x, z) => (SLOT_ORDER.indexOf(x.Slot) - SLOT_ORDER.indexOf(z.Slot)) || (x._i - z._i));
+        const starters = rows.filter((r) => r.Started === "Yes");
+        const bench = rows.filter((r) => r.Started !== "Yes");
+        const projTot = starters.reduce((s, r) => s + (num(r["Proj Pts"]) || 0), 0);
+        const benchBest = Math.max.apply(null, bench.map((r) => num(r.Points)).filter((v) => !isNaN(v)).concat([-Infinity]));
+        const line = (r, isBench) => {
+          const pts = isNum(r.Points) ? num(r.Points).toFixed(2) : (r.Note ? esc(r.Note.toUpperCase()) : "—");
+          const pos = isBench ? (posOf[r.Player] || "") : "";
+          const hot = isBench && num(r.Points) === benchBest && benchBest > 0;
+          return '<tr class="' + (isBench ? "bench" : "") + '"><td class="slot">' + esc(r.Slot) + (pos ? ' <span class="muted">' + esc(pos) + "</span>" : "") +
+            '</td><td class="player">' + esc(r.Player) + '</td><td class="num muted">' + (isNum(r["Proj Pts"]) ? num(r["Proj Pts"]).toFixed(1) : "—") +
+            '</td><td class="num' + (hot ? " hotbench" : "") + '">' + pts + "</td></tr>";
+        };
+        const l = lu(m);
+        const extra = l ? '<div class="box-extra"><span>Best possible <b>' + fmt(l.Optimal) + "</b></span><span>Left on bench <b>" + fmt(l["Bench Left"]) +
+          "</b></span><span>Efficiency <b>" + pct(l.Efficiency) + "</b></span></div>" : "";
+        const tableHtml = rows.length
+          ? '<div class="scroll"><table class="box"><thead><tr><th scope="col">Slot</th><th scope="col">Player</th><th scope="col" class="num">Proj</th><th scope="col" class="num">Pts</th></tr></thead><tbody>' +
+            starters.map((r) => line(r, false)).join("") +
+            '<tr class="divider"><td colspan="4">Bench</td></tr>' + bench.map((r) => line(r, true)).join("") + "</tbody></table></div>"
+          : '<p class="note">No roster data for this week.</p>';
+        return '<section class="box-side' + (won ? " won" : "") + '"><div class="box-head"><a class="box-name" href="#/career/' + enc(m) + '">' + esc(m) + "</a>" +
+          '<span class="box-score">' + score.toFixed(2) + "</span></div>" +
+          (rows.length ? '<div class="box-proj">Projected ' + projTot.toFixed(1) + " · " + signed(score - projTot) + " vs proj</div>" : "") +
+          extra + tableHtml + "</section>";
+      }
+
+      const wkLabel = isRegularWeek(w) ? "Week " + w : w;
+      return '<div class="hero"><span class="kicker">' + esc(y) + " · " + esc(wkLabel) + '</span><h1>' + esc(p1) + " vs " + esc(p2) + "</h1></div>" +
+        '<div class="box-grid">' + side(p1, s1, s1 > s2) + side(p2, s2, s2 > s1) + "</div>" +
+        '<p class="note">Highlighted bench score = the best player left on the bench. ' + link("games/" + enc(y) + "/" + enc(w), "← All " + wkLabel + " games") +
+        " · " + link("rivalries/" + enc(p1) + "/" + enc(p2), "Full rivalry") + "</p>";
+    });
+  }
+
   /* ============================== router ============================== */
 
   function route() {
@@ -521,6 +610,8 @@
     else if (name === "career") p = pageCareer(parts[1]);
     else if (name === "rivalries") p = pageRivalries(parts[1], parts[2]);
     else if (name === "rankings") p = pageRankings();
+    else if (name === "games") p = pageGames(parts[1], parts[2]);
+    else if (name === "game") p = pageGame(parts[1], parts[2], parts[3], parts[4]);
     else p = pageHome();
     if (!app.innerHTML) app.innerHTML = '<div class="state">Loading…</div>';
     p.then((html) => { app.innerHTML = html; })
