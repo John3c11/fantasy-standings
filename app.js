@@ -309,7 +309,7 @@
           { key: "Record", label: "W-L", num: true, sortVal: (r) => wins(r.Record) * 1000 + num(r["Points For"]) / 10 },
           { key: "Points For", label: "PF", num: true, render: (r) => fmt(r["Points For"]) },
           { key: "Luck", label: "Luck", num: true, render: (r) => signed(r.Luck) },
-        ], st, { sortKey: "Record" }), link("season/" + yr, "Full season →")) +
+        ], st, { sortKey: "Record" }), link("odds", "Playoff odds →") + " &nbsp; " + link("season/" + yr, "Full season →")) +
         section("Power rankings", eloTableCompact(d.elo), link("rankings", "Elo chart →")) +
         "</div>";
       return html;
@@ -867,6 +867,144 @@
     });
   }
 
+  /* ============================== playoff odds ============================== */
+
+  const ODDS = { sims: 10000, stakeSims: 5000, playoffSpots: 6, byes: 2, toiletSpots: 2, regWeeks: 14 };
+
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function buildOddsModel(games) {
+    const reg = games.filter((g) => isRegularWeek(g.Week) && +g.Week <= ODDS.regWeeks && g["Player 1"] && g["Player 2"]);
+    const yr = uniq(reg.filter((g) => isNum(g["P1 Points"])).map((g) => g.Year)).sort((a, b) => b - a)[0];
+    const yrGames = reg.filter((g) => g.Year === yr);
+    const played = yrGames.filter((g) => isNum(g["P1 Points"]) && isNum(g["P2 Points"]));
+    const left = yrGames.filter((g) => !(isNum(g["P1 Points"]) && isNum(g["P2 Points"])));
+    const teams = uniq(yrGames.flatMap((g) => [g["Player 1"], g["Player 2"]])).sort();
+    const T = {};
+    teams.forEach((t) => (T[t] = { w: 0, l: 0, tie: 0, pf: 0, scores: [] }));
+    played.forEach((g) => {
+      const a = g["Player 1"], b = g["Player 2"], sa = num(g["P1 Points"]), sb = num(g["P2 Points"]);
+      T[a].pf += sa; T[b].pf += sb; T[a].scores.push(sa); T[b].scores.push(sb);
+      if (sa > sb) { T[a].w++; T[b].l++; } else if (sb > sa) { T[b].w++; T[a].l++; } else { T[a].tie++; T[b].tie++; }
+    });
+    const all = teams.flatMap((t) => T[t].scores);
+    const lgMean = all.reduce((s, v) => s + v, 0) / Math.max(all.length, 1);
+    const lgVar = all.reduce((s, v) => s + (v - lgMean) * (v - lgMean), 0) / Math.max(all.length - 1, 1);
+    const K = 3; // weeks of league-average "prior" so a hot start doesn't dominate
+    teams.forEach((t) => {
+      const sc = T[t].scores, n = sc.length;
+      const m = n ? sc.reduce((s, v) => s + v, 0) / n : lgMean;
+      const v = n > 1 ? sc.reduce((s, x) => s + (x - m) * (x - m), 0) / (n - 1) : lgVar;
+      T[t].mean = (n * m + K * lgMean) / (n + K);
+      T[t].sd = Math.max(Math.sqrt((n * v + K * lgVar) / (n + K)), 10);
+    });
+    const nextWeek = left.length ? Math.min.apply(null, left.map((g) => +g.Week)) : null;
+    return { yr: yr, teams: teams, T: T, left: left, nextWeek: nextWeek, lastPlayed: played.length ? Math.max.apply(null, played.map((g) => +g.Week)) : 0 };
+  }
+
+  function simulate(model, sims, seed, forced) {
+    const rnd = mulberry32(seed);
+    const normal = () => { let u = 0, v = 0; while (u === 0) u = rnd(); v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+    const names = model.teams, n = names.length, idx = {};
+    names.forEach((t, i) => (idx[t] = i));
+    const sched = model.left.map((g) => [idx[g["Player 1"]], idx[g["Player 2"]], g]);
+    const tally = names.map(() => ({ playoff: 0, bye: 0, top: 0, toilet: 0, last: 0, wins: 0 }));
+    const w = new Float64Array(n), pf = new Float64Array(n), order = names.map((_, i) => i);
+    for (let s = 0; s < sims; s++) {
+      for (let i = 0; i < n; i++) { const t = model.T[names[i]]; w[i] = t.w + t.tie / 2; pf[i] = t.pf; }
+      for (let k = 0; k < sched.length; k++) {
+        const a = sched[k][0], b = sched[k][1], ta = model.T[names[a]], tb = model.T[names[b]];
+        let sa = ta.mean + ta.sd * normal(), sb = tb.mean + tb.sd * normal();
+        if (forced && sched[k][2] === forced.game) {
+          const winA = forced.winner === names[a];
+          if ((winA && sa < sb) || (!winA && sb < sa)) { const x = sa; sa = sb; sb = x; }
+        }
+        pf[a] += sa; pf[b] += sb;
+        if (sa > sb) w[a]++; else w[b]++;
+      }
+      order.sort((x, y) => (w[y] - w[x]) || (pf[y] - pf[x]));
+      for (let r = 0; r < n; r++) {
+        const t = tally[order[r]];
+        if (r < ODDS.playoffSpots) t.playoff++;
+        if (r < ODDS.byes) t.bye++;
+        if (r === 0) t.top++;
+        if (r >= n - ODDS.toiletSpots) t.toilet++;
+        if (r === n - 1) t.last++;
+      }
+      for (let i = 0; i < n; i++) tally[i].wins += w[i];
+    }
+    const out = {};
+    names.forEach((t, i) => {
+      const x = tally[i];
+      out[t] = { playoff: x.playoff / sims, bye: x.bye / sims, top: x.top / sims, toilet: x.toilet / sims, last: x.last / sims, wins: x.wins / sims };
+    });
+    return out;
+  }
+
+  function oddsPct(p) {
+    if (p >= 0.995 && p < 1) return ">99%";
+    if (p > 0 && p < 0.005) return "<1%";
+    return Math.round(p * 100) + "%";
+  }
+  function oddsBar(p, cls) {
+    return '<div class="obar ' + (cls || "") + '"><span style="width:' + (p * 100).toFixed(1) + '%"></span><b>' + oddsPct(p) + "</b></div>";
+  }
+
+  function pageOdds() {
+    return loadMany(["games"]).then((d) => {
+      const m = buildOddsModel(d.games);
+      if (!m.teams.length) return '<div class="state">No games yet.</div>';
+      const head = '<div class="hero"><span class="kicker">' + esc(m.yr) + " season · after week " + m.lastPlayed + '</span><h1>Playoff odds</h1></div>';
+      if (!m.left.length) return head + '<p class="note">The regular season is over, so there’s nothing left to simulate. ' + link("season/" + m.yr, "See the final standings →") + "</p>";
+      const res = simulate(m, ODDS.sims, 20260001);
+      const rows = m.teams.map((t) => {
+        const T = m.T[t], gamesLeft = m.left.filter((g) => g["Player 1"] === t || g["Player 2"] === t).length;
+        const pw = res[t].wins, total = T.w + T.l + T.tie + gamesLeft;
+        return { t: t, rec: T.w + "-" + T.l + (T.tie ? "-" + T.tie : ""), w: T.w, pf: T.pf, mean: T.mean,
+          proj: pw.toFixed(1) + "-" + (total - pw).toFixed(1), pw: pw, r: res[t] };
+      });
+      const html = [head];
+      html.push('<p class="note">The rest of the regular season, simulated ' + ODDS.sims.toLocaleString() + " times. Each team’s weekly score is drawn from its " + esc(m.yr) +
+        " scoring average and week-to-week swing (blended with the league average early in the year). Top " + ODDS.playoffSpots + " make the playoffs, top " + ODDS.byes +
+        " get a bye, bottom " + ODDS.toiletSpots + " go to the toilet bowl. Ties in record are broken by points for.</p>");
+      html.push(section("Odds", table("odds", [
+        { key: "t", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.t), r.t) },
+        { key: "rec", label: "Record", num: true, sortVal: (r) => r.w * 10000 + r.pf },
+        { key: "pf", label: "PF", num: true, sortVal: (r) => r.pf, render: (r) => r.pf.toFixed(1) },
+        { key: "mean", label: "Strength", num: true, sortVal: (r) => r.mean, render: (r) => r.mean.toFixed(1) },
+        { key: "proj", label: "Proj Final", num: true, sortVal: (r) => r.pw },
+        { key: "playoff", label: "Playoffs", sortVal: (r) => r.r.playoff, render: (r) => oddsBar(r.r.playoff) },
+        { key: "bye", label: "Bye", sortVal: (r) => r.r.bye, render: (r) => oddsBar(r.r.bye) },
+        { key: "top", label: "#1 Seed", sortVal: (r) => r.r.top, render: (r) => oddsBar(r.r.top) },
+        { key: "toilet", label: "Toilet Bowl", sortVal: (r) => r.r.toilet, render: (r) => oddsBar(r.r.toilet, "bad") },
+      ], rows, { sortKey: "playoff" }), "Strength = expected weekly score"));
+
+      // what's at stake next week: playoff odds if each side wins
+      const wk = m.left.filter((g) => +g.Week === m.nextWeek);
+      let seed = 777;
+      const cards = wk.map((g) => {
+        const a = g["Player 1"], b = g["Player 2"];
+        const ifA = simulate(m, ODDS.stakeSims, seed++, { game: g, winner: a });
+        const ifB = simulate(m, ODDS.stakeSims, seed++, { game: g, winner: b });
+        const sideRow = (t, win, lose) => '<div class="stake-row"><span class="who">' + esc(t) + '</span><span class="stake-nums"><span>Win <b>' + oddsPct(win) +
+          '</b></span><span>Lose <b>' + oddsPct(lose) + '</b></span><span class="swing">±' + Math.round((win - lose) * 100) + "</span></span></div>";
+        const swing = Math.max(ifA[a].playoff - ifB[a].playoff, ifB[b].playoff - ifA[b].playoff);
+        return { swing: swing, html: '<div class="game stake"><div class="game-label">Week ' + esc(g.Week) + " · playoff odds</div>" +
+          sideRow(a, ifA[a].playoff, ifB[a].playoff) + sideRow(b, ifB[b].playoff, ifA[b].playoff) + "</div>" };
+      }).sort((x, y) => y.swing - x.swing);
+      html.push(section("What’s at stake in week " + m.nextWeek, '<p class="note">Each person’s playoff odds if they win or lose their next game. The ± is how much that one game is worth. Biggest swings first.</p>' +
+        '<div class="scores">' + cards.map((c) => c.html).join("") + "</div>"));
+      return html.join("");
+    });
+  }
+
   /* ============================== game log ============================== */
 
   function pageGames(yArg, wArg) {
@@ -959,6 +1097,7 @@
     else if (name === "records") p = pageRecords();
     else if (name === "trades") p = pageTrades(parts[1]);
     else if (name === "players") p = pagePlayers();
+    else if (name === "odds") p = pageOdds();
     else if (name === "player") p = pagePlayer(parts[1]);
     else if (name === "game") p = pageGame(parts[1], parts[2], parts[3], parts[4]);
     else p = pageHome();

@@ -255,3 +255,15 @@ table.records tr.first td { border-top: 3px solid var(--chalk); }
 .search input::placeholder { color: var(--chalk-dim); }
 a.plink { text-decoration: none; border-bottom: 1px dotted var(--chalk-dim); }
 a.plink:hover { color: var(--amber); border-bottom-color: var(--amber); }
+
+/* ---------- playoff odds ---------- */
+.obar { position: relative; min-width: 110px; height: 30px; background: rgba(245,245,240,0.08); border: 1px solid var(--line); }
+.obar span { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(255, 176, 0, 0.55); }
+.obar.bad span { background: rgba(255, 138, 128, 0.5); }
+.obar b { position: relative; display: block; text-align: right; padding: 3px 8px; font-family: var(--mono); font-weight: 400; font-size: 17px; }
+.stake-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 14px; flex-wrap: wrap; }
+.stake-row + .stake-row { border-top: 2px solid var(--line); }
+.stake-row .who { font-weight: 700; font-size: 20px; text-transform: uppercase; letter-spacing: 0.04em; }
+.stake-nums { display: flex; gap: 14px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--chalk-dim); align-items: baseline; }
+.stake-nums b { font-family: var(--mono); font-weight: 400; font-size: 18px; color: var(--chalk); }
+.stake-nums .swing { font-family: var(--mono); font-size: 18px; color: var(--amber); }
