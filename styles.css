@@ -220,3 +220,11 @@ table.box td.player { font-weight: 700; }
 table.box tr.bench td { color: var(--chalk-dim); }
 table.box tr.divider td { background: rgba(122, 31, 31, 0.55); color: var(--chalk); font-size: 13px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; padding: 5px 12px; }
 table.box tr.bench td.hotbench { color: var(--amber); font-weight: 700; }
+
+/* ---------- records ---------- */
+table.records td { white-space: normal; vertical-align: top; }
+table.records td.rec-label { font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+table.records td.rec-val { color: var(--amber); font-size: 20px; white-space: nowrap; }
+table.records td.detail { color: var(--chalk-dim); min-width: 220px; }
+table.records td.when { white-space: nowrap; font-family: var(--mono); font-size: 16px; }
+table.records tr.first td { border-top: 3px solid var(--chalk); }

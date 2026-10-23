@@ -522,6 +522,158 @@
       section("History", eloChart(d.elo)));
   }
 
+  /* ============================== records ============================== */
+
+  function pageRecords() {
+    return loadMany(["allGames", "standings", "lineups", "projections", "rosters", "positions"]).then((d) => {
+      const ag = d.allGames.filter((r) => r.Player && isNum(r.Points) && isNum(r["Opp Points"]));
+      // year|rosterWeek|manager -> game (week label + opponent), so any record can link to its box score
+      const gameAt = {};
+      ag.forEach((r) => { gameAt[r.Year + "|" + rosterWeek(r.Week) + "|" + r.Player] = r; });
+      const wkText = (w) => (isRegularWeek(w) ? "Wk " + w : w);
+      const when = (y, wLabel, m, opp) => {
+        const txt = esc(y) + " · " + esc(wkText(wLabel));
+        return opp ? '<a href="#/game/' + gameRoute(y, wLabel, m, opp) + '">' + txt + "</a>" : txt;
+      };
+      const whenRW = (y, rw, m) => {
+        const g = gameAt[y + "|" + rw + "|" + m];
+        return g ? when(y, g.Week, m, g.Opponent) : esc(y) + " · Wk " + esc(rw);
+      };
+      const best = (rows, val, asc) => rows.reduce((b, r) => {
+        const v = val(r);
+        if (isNaN(v)) return b;
+        return !b || (asc ? v < b.v : v > b.v) ? { r: r, v: v } : b;
+      }, null);
+      const out = [];
+      const add = (sec, label, hit, value, manager, detail, whenHtml) => {
+        if (!hit) return;
+        out.push({ sec: sec, label: label, value: value, manager: manager, detail: detail, when: whenHtml });
+      };
+
+      /* --- game records --- */
+      const wins = ag.filter((r) => num(r.Win) === 1), lossesR = ag.filter((r) => num(r.Loss) === 1);
+      const gameRec = (label, rows, val, asc, show) => {
+        const h = best(rows, val, asc);
+        if (!h) return;
+        const r = h.r;
+        add("Game records", label, h, show ? show(h.v) : h.v.toFixed(2), r.Player,
+          "vs " + esc(r.Opponent) + " (" + num(r.Points).toFixed(2) + " – " + num(r["Opp Points"]).toFixed(2) + ")",
+          when(r.Year, r.Week, r.Player, r.Opponent));
+      };
+      gameRec("Highest score", ag, (r) => num(r.Points), false);
+      gameRec("Lowest score", ag, (r) => num(r.Points), true);
+      gameRec("Biggest blowout", wins, (r) => num(r.Points) - num(r["Opp Points"]), false, (v) => "+" + v.toFixed(2));
+      gameRec("Closest game", wins, (r) => num(r.Points) - num(r["Opp Points"]), true, (v) => "+" + v.toFixed(2));
+      gameRec("Highest losing score", lossesR, (r) => num(r.Points), false);
+      gameRec("Lowest winning score", wins, (r) => num(r.Points), true);
+      gameRec("Highest combined score", wins, (r) => num(r.Points) + num(r["Opp Points"]), false);
+      gameRec("Lowest combined score", wins, (r) => num(r.Points) + num(r["Opp Points"]), true);
+
+      /* --- season records (finished seasons only) --- */
+      const done = d.standings.filter((r) => isNum(r.Place));
+      const seasonRec = (label, val, asc, show) => {
+        const h = best(done, val, asc);
+        if (!h) return;
+        add("Season records", label, h, show ? show(h.v) : String(h.v), h.r.Player,
+          "Went " + esc(h.r.Record) + ", finished #" + esc(h.r.Place), link("season/" + h.r.Year, h.r.Year + " season"));
+      };
+      seasonRec("Most wins", (r) => wins_(r.Record), false);
+      seasonRec("Most points for", (r) => num(r["Points For"]), false, (v) => v.toFixed(2));
+      seasonRec("Fewest points for", (r) => num(r["Points For"]), true, (v) => v.toFixed(2));
+      seasonRec("Most points against", (r) => num(r["Points Against"]), false, (v) => v.toFixed(2));
+      seasonRec("Luckiest season", (r) => num(r.Luck), false, (v) => signed(v));
+      seasonRec("Unluckiest season", (r) => num(r.Luck), true, (v) => signed(v));
+      seasonRec("Most weekly high scores", (r) => num(r["Weekly Highs"]), false);
+      seasonRec("Most weekly low scores", (r) => num(r["Weekly Lows"]), false);
+
+      /* --- streaks --- */
+      const streak = (flag) => {
+        let top = null;
+        uniq(ag.map((r) => r.Player)).forEach((p) => {
+          const g = ag.filter((r) => r.Player === p).sort((a, b) => (a.Year - b.Year) || (weekSortKey(a.Week) - weekSortKey(b.Week)));
+          let run = 0, start = 0;
+          g.forEach((r, i) => {
+            if (num(r[flag]) === 1) { if (run === 0) start = i; run++; if (!top || run > top.n) top = { n: run, p: p, a: g[start], b: r }; }
+            else run = 0;
+          });
+        });
+        return top;
+      };
+      [["Longest win streak", "Win"], ["Longest losing streak", "Loss"]].forEach((x) => {
+        const t = streak(x[1]);
+        if (t) add("Streaks", x[0], t, t.n + " games", t.p,
+          "From " + when(t.a.Year, t.a.Week, t.p, t.a.Opponent) + " to " + when(t.b.Year, t.b.Week, t.p, t.b.Opponent), "");
+      });
+
+      /* --- lineup records (weeks 1-14) --- */
+      const lu = d.lineups.filter((r) => isNum(r.Week) && +r.Week <= 14 && isNum(r.Optimal));
+      const luRec = (label, rows, val, asc, show) => {
+        const h = best(rows, val, asc);
+        if (!h) return;
+        const r = h.r;
+        add("Lineup records", label, h, show(h.v), r.Manager,
+          "Scored " + fmt(r.Score) + " of a possible " + fmt(r.Optimal) + (r.Result === "L" ? ", lost to " + esc(r.Opponent) : ""),
+          whenRW(r.Year, r.Week, r.Manager));
+      };
+      luRec("Most points left on bench", lu, (r) => num(r["Bench Left"]), false, (v) => v.toFixed(2));
+      luRec("Worst lineup efficiency", lu, (r) => num(r.Efficiency), true, (v) => pct(v));
+      luRec("Most painful self-inflicted loss", lu.filter((r) => num(r["Self-Inflicted Loss"]) === 1), (r) => num(r["Bench Left"]), false, (v) => v.toFixed(2) + " left");
+      const seasonAgg = {};
+      lu.forEach((r) => {
+        const k = r.Year + "|" + r.Manager;
+        const o = seasonAgg[k] = seasonAgg[k] || { y: r.Year, m: r.Manager, bench: 0, sil: 0 };
+        o.bench += num(r["Bench Left"]) || 0; o.sil += num(r["Self-Inflicted Loss"]) || 0;
+      });
+      const sa = Object.values(seasonAgg);
+      const hb = best(sa, (o) => o.bench, false);
+      if (hb) add("Lineup records", "Most bench points left (season)", hb, hb.v.toFixed(1), hb.r.m, "", link("season/" + hb.r.y, hb.r.y + " season"));
+      const hs = best(sa, (o) => o.sil, false);
+      if (hs && hs.v > 0) add("Lineup records", "Most self-inflicted losses (season)", hs, String(hs.v), hs.r.m, "Losses they'd have won with their own bench", link("season/" + hs.r.y, hs.r.y + " season"));
+
+      /* --- projection records --- */
+      const pj = d.projections.filter((r) => r.Result === "W" || r.Result === "L");
+      const up = best(pj.filter((r) => num(r["Upset Loss"]) === 1), (r) => num(r.Proj) - num(r["Opp Proj"]), false);
+      if (up) add("Projections", "Biggest upset loss", up, "Proj +" + up.v.toFixed(1), up.r.Manager,
+        "Projected " + fmt(up.r.Proj, 1) + "–" + fmt(up.r["Opp Proj"], 1) + ", lost " + fmt(up.r.Score) + "–" + fmt(up.r["Opp Score"]) + " to " + esc(up.r.Opponent),
+        whenRW(up.r.Year, up.r.Week, up.r.Manager));
+      [["Most points over projection", false], ["Most points under projection", true]].forEach((x) => {
+        const h = best(pj, (r) => num(r["Vs Proj"]), x[1]);
+        if (h) add("Projections", x[0], h, signed(h.v, 2), h.r.Manager, "Scored " + fmt(h.r.Score) + " vs projected " + fmt(h.r.Proj), whenRW(h.r.Year, h.r.Week, h.r.Manager));
+      });
+
+      /* --- render the record sections --- */
+      const secs = uniq(out.map((o) => o.sec));
+      let html = '<div class="hero"><span class="kicker">League history</span><h1>Records</h1></div>' +
+        '<p class="note">Tap a date to open that game’s box score.</p>';
+      secs.forEach((sec) => {
+        html += section(sec, '<div class="scroll"><table class="records"><thead><tr><th scope="col">Record</th><th scope="col" class="num">Value</th><th scope="col">Manager</th><th scope="col">Detail</th><th scope="col">When</th></tr></thead><tbody>' +
+          out.filter((o) => o.sec === sec).map((o) =>
+            '<tr><td class="rec-label">' + esc(o.label) + '</td><td class="num rec-val">' + esc(o.value) + '</td><td class="name">' + link("career/" + enc(o.manager), o.manager) +
+            '</td><td class="detail">' + o.detail + '</td><td class="when">' + o.when + "</td></tr>").join("") + "</tbody></table></div>");
+      });
+
+      /* --- top performances by position --- */
+      const posOf = {};
+      d.positions.forEach((r) => { if (r.Player) posOf[r.Player] = r["Final Pos"] || r["Derived Pos"]; });
+      const rs = d.rosters.filter((r) => isNum(r.Points) && (r.Counts === undefined || r.Counts === "" || r.Counts === "Yes"));
+      const boards = [["QB", (r) => r.Started === "Yes" && posOf[r.Player] === "QB"], ["RB", (r) => r.Started === "Yes" && posOf[r.Player] === "RB"],
+        ["WR", (r) => r.Started === "Yes" && posOf[r.Player] === "WR"], ["TE", (r) => r.Started === "Yes" && posOf[r.Player] === "TE"],
+        ["K", (r) => r.Started === "Yes" && posOf[r.Player] === "K"], ["DEF", (r) => r.Started === "Yes" && posOf[r.Player] === "DEF"],
+        ["Bench", (r) => r.Started !== "Yes"]];
+      const tpRows = [];
+      boards.forEach((b) => {
+        rs.filter(b[1]).sort((x, z) => num(z.Points) - num(x.Points)).slice(0, 3).forEach((r, i) => tpRows.push({ cat: b[0], i: i + 1, r: r }));
+      });
+      html += section("Top performances", '<div class="scroll"><table class="records"><thead><tr><th scope="col">Pos</th><th scope="col">#</th><th scope="col">Player</th><th scope="col" class="num">Pts</th><th scope="col">Manager</th><th scope="col">When</th></tr></thead><tbody>' +
+        tpRows.map((t) => '<tr' + (t.i === 1 ? ' class="first"' : "") + '><td class="rec-label">' + (t.i === 1 ? esc(t.cat) : "") + '</td><td class="rank">' + t.i +
+          '</td><td class="name">' + esc(t.r.Player) + '</td><td class="num rec-val">' + num(t.r.Points).toFixed(2) + '</td><td class="name">' + link("career/" + enc(t.r.Manager), t.r.Manager) +
+          '</td><td class="when">' + whenRW(t.r.Year, t.r.Week, t.r.Manager) + "</td></tr>").join("") + "</tbody></table></div>",
+        "Started players · Bench = best games left on a bench");
+      return html;
+    });
+  }
+  const wins_ = (rec) => wins(rec);
+
   /* ============================== game log ============================== */
 
   function pageGames(yArg, wArg) {
@@ -611,6 +763,7 @@
     else if (name === "rivalries") p = pageRivalries(parts[1], parts[2]);
     else if (name === "rankings") p = pageRankings();
     else if (name === "games") p = pageGames(parts[1], parts[2]);
+    else if (name === "records") p = pageRecords();
     else if (name === "game") p = pageGame(parts[1], parts[2], parts[3], parts[4]);
     else p = pageHome();
     if (!app.innerHTML) app.innerHTML = '<div class="state">Loading…</div>';
