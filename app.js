@@ -97,6 +97,7 @@
   const isRegularWeek = (w) => /^\d+$/.test(String(w).trim());
   const link = (route, text, cls) => '<a href="#/' + route + '"' + (cls ? ' class="' + cls + '"' : "") + ">" + esc(text) + "</a>";
   const enc = encodeURIComponent;
+  const plink = (name) => (name ? '<a class="plink" href="#/player/' + enc(name) + '">' + esc(name) + "</a>" : "");
 
   function playedGames(games) {
     return games.filter((g) => g["Player 1"] && isNum(g["P1 Points"]) && isNum(g["P2 Points"]));
@@ -350,7 +351,7 @@
       const mv = d.mvps.filter((r) => r.Year === yr);
       if (mv.length) html.push(section("Team MVPs", table("season-mvp-" + yr, [
         { key: "Manager", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.Manager), r.Manager) },
-        { key: "MVP", label: "MVP", cls: "name" },
+        { key: "MVP", label: "MVP", cls: "name", render: (r) => plink(r.MVP) },
         { key: "Pos", label: "Pos" },
         { key: "Acquired", label: "Acquired" },
         { key: "Started Pts", label: "Started Pts", num: true, render: (r) => fmt(r["Started Pts"]) },
@@ -461,7 +462,7 @@
       const mv = d.mvps.filter((r) => r.Manager === p);
       if (mv.length) html.push(section("Team MVPs", table("career-mvp-" + p, [
         { key: "Year", label: "Year", num: true },
-        { key: "MVP", label: "MVP", cls: "name" },
+        { key: "MVP", label: "MVP", cls: "name", render: (r) => plink(r.MVP) },
         { key: "Pos", label: "Pos" },
         { key: "Acquired", label: "Acquired" },
         { key: "Started Pts", label: "Started Pts", num: true, render: (r) => fmt(r["Started Pts"]) },
@@ -666,7 +667,7 @@
       });
       html += section("Top performances", '<div class="scroll"><table class="records"><thead><tr><th scope="col">Pos</th><th scope="col">#</th><th scope="col">Player</th><th scope="col" class="num">Pts</th><th scope="col">Manager</th><th scope="col">When</th></tr></thead><tbody>' +
         tpRows.map((t) => '<tr' + (t.i === 1 ? ' class="first"' : "") + '><td class="rec-label">' + (t.i === 1 ? esc(t.cat) : "") + '</td><td class="rank">' + t.i +
-          '</td><td class="name">' + esc(t.r.Player) + '</td><td class="num rec-val">' + num(t.r.Points).toFixed(2) + '</td><td class="name">' + link("career/" + enc(t.r.Manager), t.r.Manager) +
+          '</td><td class="name">' + plink(t.r.Player) + '</td><td class="num rec-val">' + num(t.r.Points).toFixed(2) + '</td><td class="name">' + link("career/" + enc(t.r.Manager), t.r.Manager) +
           '</td><td class="when">' + whenRW(t.r.Year, t.r.Week, t.r.Manager) + "</td></tr>").join("") + "</tbody></table></div>",
         "Started players · Bench = best games left on a bench");
       return html;
@@ -701,7 +702,7 @@
         const winner = va > vb ? t.a : vb > va ? t.b : null;
         const side = (m, v) => '<div class="trade-side' + (winner === m ? " won" : "") + '"><div class="trade-who">' + link("career/" + enc(m), m) +
           '<span class="trade-val">' + valTxt(v) + "</span></div><ul>" +
-          ((t.got[m] || []).map((r) => "<li><span>" + esc(r.Player) + ' <span class="muted">' + esc(r.Pos || "") + '</span></span><span class="mono">' +
+          ((t.got[m] || []).map((r) => "<li><span>" + plink(r.Player) + ' <span class="muted">' + esc(r.Pos || "") + '</span></span><span class="mono">' +
             fmt(r["Started Pts"], 1) + " pts · " + valTxt(val(r)) + "</span></li>").join("") || '<li class="muted">Nothing tracked</li>') + "</ul></div>";
         return '<article class="trade"><div class="game-label">' + esc(t.y) + " · Week " + esc(t.w) +
           (winner ? " · " + esc(winner) + " won by " + Math.abs(va - vb).toFixed(1) : " · Even") + "</div>" +
@@ -727,7 +728,7 @@
 
       const topList = (how, n) => inYr.filter((r) => r["How Acquired"] === how).sort((a, b) => val(b) - val(a)).slice(0, n);
       const moveCols = [
-        { key: "Player", label: "Player", cls: "name" },
+        { key: "Player", label: "Player", cls: "name", render: (r) => plink(r.Player) },
         { key: "Pos", label: "Pos" },
         { key: "Manager", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.Manager), r.Manager) },
         { key: "Year", label: "Year", num: true },
@@ -754,6 +755,115 @@
           tradeList.length + " trade" + (tradeList.length === 1 ? "" : "s")) +
         section("Best waiver pickups", table("tr-wv-" + yr, moveCols, topList("Waiver", 15), { sortKey: "Value" })) +
         section("Best draft values", table("tr-dr-" + yr, moveCols.filter((c) => c.key !== "First Week"), topList("Draft", 10), { sortKey: "Value" }));
+    });
+  }
+
+  /* ============================== players ============================== */
+
+  function playerIndex(rosters, positions) {
+    const posOf = {};
+    positions.forEach((r) => { if (r.Player) posOf[r.Player] = r["Final Pos"] || r["Derived Pos"]; });
+    const by = {};
+    rosters.forEach((r) => {
+      if (!r.Player || r.Player === "(Empty)") return;
+      const o = by[r.Player] = by[r.Player] || { name: r.Player, pos: posOf[r.Player] || "", years: new Set(), tot: 0, gp: 0 };
+      o.years.add(r.Year);
+      if (isNum(r.Points)) { o.tot += num(r.Points); o.gp++; }
+    });
+    return Object.values(by);
+  }
+
+  function pagePlayers() {
+    return loadMany(["rosters", "positions"]).then((d) => {
+      const list = playerIndex(d.rosters, d.positions).sort((a, b) => b.tot - a.tot);
+      return '<div class="hero"><span class="kicker">NFL players</span><h1>Players</h1></div>' +
+        '<label class="search"><span>Search</span><input id="player-search" type="search" placeholder="Type a player or position (e.g. RB)" autocomplete="off"></label>' +
+        '<p class="note">Every player who’s been on a roster in the league, by total points scored while rostered.</p>' +
+        '<div class="scroll"><table class="plist"><thead><tr><th scope="col">Player</th><th scope="col">Pos</th><th scope="col" class="num">Seasons</th><th scope="col" class="num">Games</th><th scope="col" class="num">Total Pts</th></tr></thead><tbody>' +
+        list.map((p) => '<tr data-q="' + esc((p.name + " " + p.pos).toLowerCase()) + '"><td class="name">' + plink(p.name) + "</td><td>" + esc(p.pos) +
+          '</td><td class="num">' + p.years.size + '</td><td class="num">' + p.gp + '</td><td class="num">' + p.tot.toFixed(1) + "</td></tr>").join("") +
+        "</tbody></table></div>";
+    });
+  }
+
+  app.addEventListener("input", (e) => {
+    if (e.target.id !== "player-search") return;
+    const q = e.target.value.trim().toLowerCase();
+    app.querySelectorAll("table.plist tbody tr").forEach((tr) => { tr.hidden = q !== "" && !tr.dataset.q.includes(q); });
+  });
+
+  function pagePlayer(name) {
+    return loadMany(["rosters", "positions", "moves", "allGames"]).then((d) => {
+      const rs = d.rosters.filter((r) => r.Player === name);
+      if (!rs.length) return '<div class="state">Player not found.</div>' + link("players", "← All players");
+      const pos = (d.positions.find((r) => r.Player === name) || {})["Final Pos"] || "";
+      const gameAt = {};
+      d.allGames.forEach((r) => { if (r.Player) gameAt[r.Year + "|" + rosterWeek(r.Week) + "|" + r.Player] = r; });
+      const boxLink = (r, text) => {
+        const g = gameAt[r.Year + "|" + r.Week + "|" + r.Manager];
+        return g && isNum(g.Points) ? '<a href="#/game/' + gameRoute(g.Year, g.Week, r.Manager, g.Opponent) + '">' + esc(text) + "</a>" : esc(text);
+      };
+      const played = rs.filter((r) => isNum(r.Points));
+      const tot = played.reduce((s, r) => s + num(r.Points), 0);
+      const bestRow = played.reduce((b, r) => (!b || num(r.Points) > num(b.Points) ? r : b), null);
+      const starts = rs.filter((r) => r.Started === "Yes").length;
+      const yrs = uniq(rs.map((r) => r.Year)).sort((a, b) => b - a);
+      const mgrs = uniq(rs.map((r) => r.Manager));
+      const tile = (lbl, val) => '<div class="tile"><span class="lbl">' + esc(lbl) + '</span><span class="val">' + val + "</span></div>";
+      const html = [];
+      html.push('<div class="hero"><span class="kicker">' + esc(pos || "Player") + '</span><h1>' + esc(name) + "</h1></div>");
+      html.push('<div class="tiles">' +
+        tile("Total Pts", tot.toFixed(1)) +
+        tile("PPG", played.length ? (tot / played.length).toFixed(2) : "—") +
+        tile("Games", played.length) +
+        tile("Times Started", starts) +
+        tile("Seasons", yrs.length) +
+        tile("Managers", mgrs.length) +
+        tile("Best Game", bestRow ? boxLink(bestRow, num(bestRow.Points).toFixed(2)) : "—") + "</div>");
+
+      const byYear = yrs.map((y) => {
+        const g = rs.filter((r) => r.Year === y), gp = g.filter((r) => isNum(r.Points));
+        const t = gp.reduce((s, r) => s + num(r.Points), 0);
+        const pj = gp.filter((r) => isNum(r["Proj Pts"]));
+        return { y: y, who: uniq(g.map((r) => r.Manager)), weeks: g.length, gp: gp.length, tot: t, ppg: gp.length ? t / gp.length : NaN,
+          best: gp.length ? Math.max.apply(null, gp.map((r) => num(r.Points))) : NaN, starts: g.filter((r) => r.Started === "Yes").length,
+          vs: pj.length ? pj.reduce((s, r) => s + num(r.Points) - num(r["Proj Pts"]), 0) / pj.length : NaN };
+      });
+      html.push(section("By season", table("pl-yr-" + name, [
+        { key: "y", label: "Year", num: true, sortVal: (r) => +r.y, render: (r) => esc(r.y) },
+        { key: "who", label: "Rostered by", sortVal: (r) => r.who.join(), render: (r) => r.who.map((m) => link("career/" + enc(m), m)).join(", ") },
+        { key: "weeks", label: "Weeks", num: true, sortVal: (r) => r.weeks, render: (r) => r.weeks },
+        { key: "gp", label: "Games", num: true, sortVal: (r) => r.gp, render: (r) => r.gp },
+        { key: "tot", label: "Total", num: true, sortVal: (r) => r.tot, render: (r) => r.tot.toFixed(1) },
+        { key: "ppg", label: "PPG", num: true, sortVal: (r) => r.ppg, render: (r) => fmt(r.ppg) },
+        { key: "best", label: "Best", num: true, sortVal: (r) => r.best, render: (r) => fmt(r.best) },
+        { key: "starts", label: "Starts", num: true, sortVal: (r) => r.starts, render: (r) => r.starts },
+        { key: "vs", label: "Avg vs Proj", num: true, sortVal: (r) => r.vs, render: (r) => '<span class="' + (r.vs > 0 ? "pos" : r.vs < 0 ? "neg" : "") + '">' + signed(r.vs, 2) + "</span>" },
+      ], byYear, { sortKey: "y" })));
+
+      const own = d.moves.filter((r) => r.Player === name);
+      if (own.length) html.push(section("Ownership", table("pl-own-" + name, [
+        { key: "Year", label: "Year", num: true },
+        { key: "Manager", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.Manager), r.Manager) },
+        { key: "How Acquired", label: "Acquired" },
+        { key: "From", label: "From", render: (r) => (r.From ? link("career/" + enc(r.From), r.From) : "") },
+        { key: "First Week", label: "First Wk", num: true },
+        { key: "Weeks Rostered", label: "Weeks", num: true },
+        { key: "Starts", label: "Starts", num: true },
+        { key: "Started Pts", label: "Started Pts", num: true, render: (r) => fmt(r["Started Pts"], 1) },
+        { key: "Value", label: "Value", num: true, render: (r) => '<span class="' + (num(r.Value) > 0 ? "pos" : num(r.Value) < 0 ? "neg" : "") + '">' + signed(r.Value) + "</span>" },
+      ], own, { sortKey: "Year" })));
+
+      html.push(section("Week by week", table("pl-wk-" + name, [
+        { key: "Year", label: "Year", num: true, sortVal: (r) => num(r.Year) * 100 + num(r.Week) },
+        { key: "Week", label: "Wk", num: true, render: (r) => boxLink(r, r.Week) },
+        { key: "Manager", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.Manager), r.Manager) },
+        { key: "Slot", label: "Slot" },
+        { key: "Proj Pts", label: "Proj", num: true, render: (r) => fmt(r["Proj Pts"], 1) },
+        { key: "Points", label: "Pts", num: true, render: (r) => (isNum(r.Points) ? num(r.Points).toFixed(2) : esc((r.Note || "—").toUpperCase())) },
+      ], rs, { sortKey: "Year" }), "Tap a week for the box score"));
+      html.push(link("players", "← All players"));
+      return html.join("");
     });
   }
 
@@ -805,7 +915,7 @@
           const pos = isBench ? (posOf[r.Player] || "") : "";
           const hot = isBench && num(r.Points) === benchBest && benchBest > 0;
           return '<tr class="' + (isBench ? "bench" : "") + '"><td class="slot">' + esc(r.Slot) + (pos ? ' <span class="muted">' + esc(pos) + "</span>" : "") +
-            '</td><td class="player">' + esc(r.Player) + '</td><td class="num muted">' + (isNum(r["Proj Pts"]) ? num(r["Proj Pts"]).toFixed(1) : "—") +
+            '</td><td class="player">' + plink(r.Player) + '</td><td class="num muted">' + (isNum(r["Proj Pts"]) ? num(r["Proj Pts"]).toFixed(1) : "—") +
             '</td><td class="num' + (hot ? " hotbench" : "") + '">' + pts + "</td></tr>";
         };
         const l = lu(m);
@@ -848,6 +958,8 @@
     else if (name === "games") p = pageGames(parts[1], parts[2]);
     else if (name === "records") p = pageRecords();
     else if (name === "trades") p = pageTrades(parts[1]);
+    else if (name === "players") p = pagePlayers();
+    else if (name === "player") p = pagePlayer(parts[1]);
     else if (name === "game") p = pageGame(parts[1], parts[2], parts[3], parts[4]);
     else p = pageHome();
     if (!app.innerHTML) app.innerHTML = '<div class="state">Loading…</div>';
