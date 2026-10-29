@@ -426,7 +426,7 @@
   }
 
   function pageCareer(pArg) {
-    return loadMany(["allTime", "standings", "allGames", "mvps", "elo", "projections"]).then((d) => {
+    return loadMany(["allTime", "standings", "allGames", "mvps", "elo", "projections", "moves", "lineups"]).then((d) => {
       const ms = managers(d.allTime);
       const p = ms.includes(pArg) ? pArg : ms[0];
       const at = d.allTime.find((r) => r.Player === p) || {};
@@ -449,6 +449,8 @@
       cols.unshift({ key: "Year", label: "Year", num: true, render: (r) => link("season/" + r.Year, r.Year) });
       html.push(section("Season by season", table("career-st-" + p, cols, st, { sortKey: "Year" })));
 
+      const myCards = years(d.standings).map((y) => (cardsForYear(d, y).find((c) => c.m === p))).filter(Boolean);
+      if (myCards.length) html.push(section("Cards", '<div class="cards">' + myCards.map((c) => cardHtml(c, true)).join("") + "</div>", "One per season"));
       html.push(section("Elo", eloChart(d.elo, p)));
 
       html.push(section("Head-to-head", table("career-h2h-" + p, [
@@ -1241,6 +1243,131 @@
     });
   }
 
+  /* ============================== trading cards ============================== */
+
+  const CARD_STATS = [
+    { k: "SCO", name: "Scoring", w: 0.35, how: "Points per game" },
+    { k: "LIN", name: "Lineups", w: 0.15, how: "Average lineup efficiency (weeks 1–14)" },
+    { k: "DRA", name: "Drafting", w: 0.15, how: "Value from drafted players" },
+    { k: "WAI", name: "Waivers", w: 0.15, how: "Value from waiver pickups" },
+    { k: "TRD", name: "Trading", w: 0.10, how: "Net Value from trades" },
+    { k: "LCK", name: "Luck", w: 0.10, how: "Actual wins vs all-play wins" },
+  ];
+
+  // rank-based 40–99 rating within one season (ties share the average)
+  function rateWithin(values) {
+    const n = values.length;
+    const sorted = values.map((v, i) => ({ v: isNaN(v) ? -Infinity : v, i: i })).sort((a, b) => a.v - b.v);
+    const out = new Array(n);
+    let j = 0;
+    while (j < n) {
+      let k = j;
+      while (k + 1 < n && sorted[k + 1].v === sorted[j].v) k++;
+      const pos = (j + k) / 2;
+      for (let t = j; t <= k; t++) out[sorted[t].i] = n > 1 ? Math.round(40 + 59 * pos / (n - 1)) : 70;
+      j = k + 1;
+    }
+    return out;
+  }
+
+  const cardCache = {};
+  function cardsForYear(d, y) {
+    if (cardCache[y]) return cardCache[y];
+    const st = d.standings.filter((r) => r.Year === y && r.Player);
+    const ms = st.map((r) => r.Player);
+    const mv = d.moves.filter((r) => r.Year === y);
+    const sumV = (m, how) => mv.filter((r) => r.Manager === m && r["How Acquired"] === how).reduce((s, r) => s + (num(r.Value) || 0), 0);
+    // trades: my received value minus what my partners received from me in the same deals
+    const net = {};
+    ms.forEach((m) => (net[m] = 0));
+    mv.filter((r) => r["How Acquired"] === "Trade" && r.From).forEach((r) => {
+      const v = num(r.Value) || 0;
+      if (r.Manager in net) net[r.Manager] += v;
+      if (r.From in net) net[r.From] -= v;
+    });
+    const lu = d.lineups.filter((r) => r.Year === y && isNum(r.Week) && +r.Week <= 14 && isNum(r.Efficiency));
+    const eff = (m) => { const x = lu.filter((r) => r.Manager === m); return x.length ? x.reduce((s, r) => s + num(r.Efficiency), 0) / x.length : NaN; };
+    const raw = {
+      SCO: st.map((r) => num(r["Avg Points"])),
+      LIN: ms.map(eff),
+      DRA: ms.map((m) => sumV(m, "Draft")),
+      WAI: ms.map((m) => sumV(m, "Waiver")),
+      TRD: ms.map((m) => net[m]),
+      LCK: st.map((r) => num(r.Luck)),
+    };
+    const rated = {};
+    CARD_STATS.forEach((c) => (rated[c.k] = rateWithin(raw[c.k])));
+    const { weeks, series } = eloSeries(d.elo);
+    const lastIdx = weeks.map((w, i) => (String(w).startsWith(String(y)) ? i : -1)).filter((i) => i >= 0).pop();
+    const cards = st.map((r, i) => {
+      const ratings = {};
+      CARD_STATS.forEach((c) => (ratings[c.k] = rated[c.k][i]));
+      const ovr = Math.round(CARD_STATS.reduce((s, c) => s + c.w * ratings[c.k], 0));
+      const ser = series.find((x) => x.name === r.Player);
+      const mvp = d.mvps.find((x) => x.Year === y && x.Manager === r.Player);
+      return {
+        y: y, m: r.Player, ratings: ratings, raw: CARD_STATS.reduce((o, c) => ((o[c.k] = raw[c.k][i]), o), {}),
+        ovr: ovr, tier: ovr >= 80 ? "gold" : ovr >= 68 ? "silver" : "bronze",
+        rec: r.Record, place: r.Place, champ: num(r.Place) === 1,
+        elo: ser && lastIdx != null ? ser.vals[lastIdx] : NaN, mvp: mvp ? mvp.MVP : "",
+      };
+    });
+    cards.sort((a, b) => b.ovr - a.ovr);
+    cards.forEach((c, i) => (c.no = i + 1));
+    return (cardCache[y] = cards);
+  }
+
+  function initials(name) {
+    return String(name).split(/\s+/).map((w) => w[0]).join("").slice(0, 3).toUpperCase();
+  }
+
+  function cardHtml(c, linkIt) {
+    const stats = CARD_STATS.map((s) => '<div class="cstat"><span>' + s.k + "</span><b>" + c.ratings[s.k] + "</b></div>").join("");
+    const inner =
+      '<div class="ctop"><span>' + esc(c.y) + " Series</span><span>No. " + String(c.no).padStart(2, "0") + "</span></div>" +
+      '<div class="cart"><span class="cini">' + esc(initials(c.m)) + "</span>" + (c.champ ? '<span class="cchamp">Champion</span>' : "") +
+      '<span class="covr"><b>' + c.ovr + "</b>OVR</span></div>" +
+      '<div class="cname">' + esc(c.m) + "</div>" +
+      '<div class="cstats">' + stats + "</div>" +
+      '<div class="cfoot"><span>' + esc(c.rec || "—") + "</span><span>" + (isNum(c.place) ? "Finished #" + esc(c.place) : "In progress") + "</span><span>Elo " +
+      (isNaN(c.elo) ? "—" : Math.round(c.elo)) + "</span></div>" +
+      (c.mvp ? '<div class="cmvp">MVP · ' + esc(c.mvp) + "</div>" : "");
+    return linkIt
+      ? '<a class="tcard ' + c.tier + '" href="#/card/' + enc(c.y) + "/" + enc(c.m) + '" aria-label="' + esc(c.m) + " " + esc(c.y) + " card, overall " + c.ovr + '">' + inner + "</a>"
+      : '<div class="tcard big ' + c.tier + '">' + inner + "</div>";
+  }
+
+  const CARD_TABS = ["standings", "moves", "lineups", "elo", "mvps"];
+
+  function pageCards(yArg) {
+    return loadMany(CARD_TABS).then((d) => {
+      const yrs = years(d.standings);
+      const y = yrs.includes(yArg) ? yArg : yrs[0];
+      const cards = cardsForYear(d, y);
+      return '<div class="hero"><span class="kicker">Collect them all</span><h1>' + esc(y) + " cards</h1></div>" +
+        chips(yrs, y, (x) => "cards/" + x) +
+        '<p class="note">Every rating is 40–99, based on where that person ranked in the league that season. <b>OVR</b> weights Scoring 35%, Lineups, Drafting and Waivers 15% each, and Trading and Luck 10% each. Gold 80+, silver 68+, bronze below. Tap a card for the breakdown.</p>' +
+        '<div class="cards">' + cards.map((c) => cardHtml(c, true)).join("") + "</div>";
+    });
+  }
+
+  function pageCard(y, m) {
+    return loadMany(CARD_TABS).then((d) => {
+      const c = cardsForYear(d, y).find((x) => x.m === m);
+      if (!c) return '<div class="state">Card not found.</div>';
+      const rawTxt = (k, v) => (isNaN(v) ? "—" : k === "SCO" ? v.toFixed(2) + " ppg" : k === "LIN" ? pct(v) : k === "LCK" ? signed(v) + " wins" : signed(v) + " value");
+      return '<div class="hero"><span class="kicker">' + esc(y) + " card</span><h1>" + esc(m) + "</h1></div>" +
+        '<div class="card-detail">' + cardHtml(c, false) +
+        '<div class="section"><div class="section-head"><h2>How it’s rated</h2><span class="kicker">Rank among ' + cardsForYear(d, y).length + " managers</span></div>" +
+        '<div class="scroll"><table><thead><tr><th scope="col">Stat</th><th scope="col">Based on</th><th scope="col" class="num">This season</th><th scope="col" class="num">Rating</th><th scope="col" class="num">Weight</th></tr></thead><tbody>' +
+        CARD_STATS.map((s) => '<tr><td class="name">' + s.k + " · " + esc(s.name) + '</td><td class="muted">' + esc(s.how) + '</td><td class="num">' + rawTxt(s.k, c.raw[s.k]) +
+          '</td><td class="num rec-val">' + c.ratings[s.k] + '</td><td class="num">' + Math.round(s.w * 100) + "%</td></tr>").join("") +
+        '<tr><td class="name">OVR</td><td class="muted">Weighted total</td><td></td><td class="num rec-val">' + c.ovr + "</td><td></td></tr>" +
+        "</tbody></table></div>" +
+        '<p class="note">' + link("cards/" + enc(y), "← All " + y + " cards") + " · " + link("career/" + enc(m), m + "’s career") + "</p></div></div>";
+    });
+  }
+
   /* ============================== game log ============================== */
 
   function pageGames(yArg, wArg) {
@@ -1334,6 +1461,8 @@
     else if (name === "trades") p = pageTrades(parts[1]);
     else if (name === "players") p = pagePlayers();
     else if (name === "odds") p = pageOdds();
+    else if (name === "cards") p = pageCards(parts[1]);
+    else if (name === "card") p = pageCard(parts[1], parts[2]);
     else if (name === "player") p = pagePlayer(parts[1]);
     else if (name === "game") p = pageGame(parts[1], parts[2], parts[3], parts[4]);
     else p = pageHome();

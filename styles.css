@@ -267,3 +267,34 @@ a.plink:hover { color: var(--amber); border-bottom-color: var(--amber); }
 .stake-nums { display: flex; gap: 14px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--chalk-dim); align-items: baseline; }
 .stake-nums b { font-family: var(--mono); font-weight: 400; font-size: 18px; color: var(--chalk); }
 .stake-nums .swing { font-family: var(--mono); font-size: 18px; color: var(--amber); }
+
+/* ---------- trading cards ---------- */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 22px; }
+.tcard {
+  --tier: #C77B3B;
+  display: flex; flex-direction: column; text-decoration: none; color: var(--chalk);
+  background: #111311; border: 5px solid var(--tier); border-radius: 14px; overflow: hidden;
+  box-shadow: 6px 6px 0 rgba(0,0,0,0.45); transition: transform .15s ease;
+}
+.tcard.silver { --tier: #C9CED6; }
+.tcard.gold { --tier: #FFB000; }
+a.tcard:hover { transform: translateY(-4px) rotate(-1deg); color: var(--chalk); }
+.ctop { display: flex; justify-content: space-between; background: var(--endzone); padding: 6px 12px; font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.cart {
+  position: relative; height: 130px; display: flex; align-items: center; justify-content: center;
+  background-color: var(--turf); background-image: repeating-linear-gradient(90deg, rgba(245,245,240,0.14) 0 2px, transparent 2px 36px);
+  border-bottom: 4px solid var(--tier);
+}
+.cini { font-size: 58px; font-weight: 800; letter-spacing: 0.04em; color: var(--chalk); text-shadow: 3px 3px 0 rgba(0,0,0,0.5); }
+.covr { position: absolute; top: 8px; right: 10px; display: flex; flex-direction: column; align-items: center; background: var(--tier); color: #111; padding: 4px 8px; border-radius: 8px; font-size: 11px; font-weight: 800; letter-spacing: 0.1em; }
+.covr b { font-family: var(--mono); font-size: 30px; font-weight: 400; line-height: 1; }
+.cchamp { position: absolute; left: 10px; top: 10px; background: var(--amber); color: #111; font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; padding: 3px 8px; border-radius: 4px; }
+.cname { padding: 8px 12px; font-size: 26px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 2px solid var(--line); }
+.cstats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; padding: 10px 12px; }
+.cstat { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; padding: 2px 4px; }
+.cstat span { font-size: 13px; font-weight: 700; letter-spacing: 0.1em; color: var(--chalk-dim); }
+.cstat b { font-family: var(--mono); font-weight: 400; font-size: 22px; color: var(--amber); }
+.cfoot { display: flex; justify-content: space-between; gap: 8px; padding: 8px 12px; border-top: 2px solid var(--line); font-size: 14px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--chalk-dim); }
+.cmvp { padding: 0 12px 10px; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--chalk-dim); }
+.card-detail { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 32px; align-items: start; }
+@media (max-width: 760px) { .card-detail { grid-template-columns: minmax(0, 1fr); } .tcard.big { max-width: 320px; } }
