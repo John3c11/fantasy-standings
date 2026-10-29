@@ -526,7 +526,7 @@
   /* ============================== records ============================== */
 
   function pageRecords() {
-    return loadMany(["allGames", "standings", "lineups", "projections", "rosters", "positions"]).then((d) => {
+    return loadMany(["allGames", "standings", "lineups", "projections", "rosters", "positions", "moves", "mvps"]).then((d) => {
       const ag = d.allGames.filter((r) => r.Player && isNum(r.Points) && isNum(r["Opp Points"]));
       // year|rosterWeek|manager -> game (week label + opponent), so any record can link to its box score
       const gameAt = {};
@@ -578,7 +578,12 @@
         add("Season records", label, h, show ? show(h.v) : String(h.v), h.r.Player,
           "Went " + esc(h.r.Record) + ", finished #" + esc(h.r.Place), link("season/" + h.r.Year, h.r.Year + " season"));
       };
-      seasonRec("Most wins", (r) => wins_(r.Record), false);
+      const wpct = (rec) => { const w = wins_(rec), l = losses(rec); return w + l ? w / (w + l) : NaN; };
+      seasonRec("Best record", (r) => wpct(r.Record), false, () => "");
+      seasonRec("Worst record", (r) => wpct(r.Record), true, () => "");
+      out.filter((o) => o.label === "Best record" || o.label === "Worst record").forEach((o) => {
+        const m = o.detail.match(/Went ([\d-]+)/); o.value = m ? m[1] : o.value;
+      });
       seasonRec("Most points for", (r) => num(r["Points For"]), false, (v) => v.toFixed(2));
       seasonRec("Fewest points for", (r) => num(r["Points For"]), true, (v) => v.toFixed(2));
       seasonRec("Most points against", (r) => num(r["Points Against"]), false, (v) => v.toFixed(2));
@@ -642,6 +647,237 @@
         if (h) add("Projections", x[0], h, signed(h.v, 2), h.r.Manager, "Scored " + fmt(h.r.Score) + " vs projected " + fmt(h.r.Proj), whenRW(h.r.Year, h.r.Week, h.r.Manager));
       });
 
+      /* ================= more records (v8) ================= */
+      const gKey = (r) => r.Year * 1000 + weekSortKey(r.Week);
+      const regRows = ag.filter((r) => isRegularWeek(r.Week));
+      // per-week league table (regular season): rank of every score that week
+      const weekRows = {};
+      regRows.forEach((r) => { (weekRows[r.Year + "|" + r.Week] = weekRows[r.Year + "|" + r.Week] || []).push(r); });
+      const rankInWeek = (r) => {
+        const list = weekRows[r.Year + "|" + r.Week].map((x) => num(x.Points)).sort((a, b) => b - a);
+        return { rank: list.indexOf(num(r.Points)) + 1, n: list.length };
+      };
+      const gameDetail = (r) => "vs " + esc(r.Opponent) + " (" + num(r.Points).toFixed(2) + " – " + num(r["Opp Points"]).toFixed(2) + ")";
+
+      // bad beat: lost with the week's 2nd-highest score; worst win: won with a bottom-2 score
+      const bb = best(regRows.filter((r) => num(r.Loss) === 1 && rankInWeek(r).rank === 2), (r) => num(r.Points), false);
+      if (bb) add("Game records", "Bad beat", bb, bb.v.toFixed(2), bb.r.Player, "2nd-best score of the week and still lost, " + gameDetail(bb.r), when(bb.r.Year, bb.r.Week, bb.r.Player, bb.r.Opponent));
+      const ww = best(regRows.filter((r) => { const k = rankInWeek(r); return num(r.Win) === 1 && k.rank >= k.n - 1; }), (r) => num(r.Points), true);
+      if (ww) add("Game records", "Worst win", ww, ww.v.toFixed(2), ww.r.Player, "One of the week's 2 lowest scores and still won, " + gameDetail(ww.r), when(ww.r.Year, ww.r.Week, ww.r.Player, ww.r.Opponent));
+
+      // championship games = the highest round played each year
+      const champRows = [];
+      uniq(ag.map((r) => r.Year)).forEach((y) => {
+        const rounds = ag.filter((r) => r.Year === y && /^round\s*\d+$/i.test(r.Week));
+        if (!rounds.length) return;
+        const top = Math.max.apply(null, rounds.map((r) => +r.Week.match(/\d+/)[0]));
+        rounds.filter((r) => +r.Week.match(/\d+/)[0] === top).forEach((r) => champRows.push(r));
+      });
+      gameRec("Highest score in a championship", champRows, (r) => num(r.Points), false);
+      gameRec("Lowest score in a championship", champRows, (r) => num(r.Points), true);
+
+      // league-wide weeks (regular season, all teams)
+      const wkTot = Object.keys(weekRows).map((k) => ({ k: k, y: k.split("|")[0], w: k.split("|")[1], tot: weekRows[k].reduce((s, r) => s + num(r.Points), 0), n: weekRows[k].length }));
+      [["Highest-scoring week (league)", false], ["Lowest-scoring week (league)", true]].forEach((x) => {
+        const h = best(wkTot, (o) => o.tot, x[1]);
+        if (h) add("Game records", x[0], h, h.v.toFixed(2), "", "All " + h.r.n + " teams combined, " + (h.v / h.r.n).toFixed(1) + " per team",
+          '<a href="#/games/' + enc(h.r.y) + "/" + enc(h.r.w) + '">' + esc(h.r.y) + " · Wk " + esc(h.r.w) + "</a>");
+      });
+
+      // season extras (finished seasons)
+      seasonRec("Best points per game", (r) => num(r["Avg Points"]), false, (v) => v.toFixed(2));
+      seasonRec("Worst points per game", (r) => num(r["Avg Points"]), true, (v) => v.toFixed(2));
+      const sdOf = (y, m) => {
+        const sc = regRows.filter((r) => r.Year === y && r.Player === m).map((r) => num(r.Points));
+        if (sc.length < 3) return NaN;
+        const mu = sc.reduce((a, b) => a + b, 0) / sc.length;
+        return Math.sqrt(sc.reduce((a, b) => a + (b - mu) * (b - mu), 0) / (sc.length - 1));
+      };
+      seasonRec("Most consistent season", (r) => sdOf(r.Year, r.Player), true, (v) => "±" + v.toFixed(1) + " pts");
+      seasonRec("Most volatile season", (r) => sdOf(r.Year, r.Player), false, (v) => "±" + v.toFixed(1) + " pts");
+      const missed = done.filter((r) => num(r.Place) > 6), made = done.filter((r) => num(r.Place) <= 6);
+      const mw = best(missed, (r) => wins_(r.Record), false);
+      if (mw) add("Season records", "Most wins, missed playoffs", mw, String(mw.v), mw.r.Player, "Went " + esc(mw.r.Record) + ", finished #" + esc(mw.r.Place), link("season/" + mw.r.Year, mw.r.Year + " season"));
+      const fw = best(made, (r) => wins_(r.Record), true);
+      if (fw) add("Season records", "Fewest wins, made playoffs", fw, String(fw.v), fw.r.Player, "Went " + esc(fw.r.Record) + ", finished #" + esc(fw.r.Place), link("season/" + fw.r.Year, fw.r.Year + " season"));
+      // seeds = regular-season order (wins, then points for)
+      const seedOf = {};
+      uniq(d.standings.map((r) => r.Year)).forEach((y) => {
+        d.standings.filter((r) => r.Year === y).slice().sort((a, b) => (wins_(b.Record) - wins_(a.Record)) || (num(b["Points For"]) - num(a["Points For"])))
+          .forEach((r, i) => (seedOf[y + "|" + r.Player] = i + 1));
+      });
+      const champs = done.filter((r) => num(r.Place) === 1);
+      const ls = best(champs, (r) => seedOf[r.Year + "|" + r.Player], false);
+      if (ls) add("Season records", "Lowest-seeded champion", ls, "#" + ls.v + " seed", ls.r.Player, "Went " + esc(ls.r.Record) + " and won it all", link("season/" + ls.r.Year, ls.r.Year + " season"));
+      const turn = [];
+      d.standings.forEach((r) => {
+        if (!isNum(r.Place)) return;
+        const prev = d.standings.find((x) => x.Player === r.Player && +x.Year === +r.Year - 1);
+        if (prev) turn.push({ r: r, prev: prev, gain: wins_(r.Record) - wins_(prev.Record) });
+      });
+      const tn = best(turn, (o) => o.gain, false);
+      if (tn && tn.v > 0) add("Season records", "Biggest turnaround", tn, "+" + tn.v + " wins", tn.r.r.Player,
+        esc(tn.r.prev.Year) + ": " + esc(tn.r.prev.Record) + " → " + esc(tn.r.r.Year) + ": " + esc(tn.r.r.Record), link("season/" + tn.r.r.Year, tn.r.r.Year + " season"));
+      const apct = (rec) => { const w = wins_(rec), l = losses(rec); return w + l ? w / (w + l) : NaN; };
+      seasonRec("Best all-play record", (r) => apct(r["All-Play Record"]), false, (v) => pct(v));
+
+      /* --- hall of fame (careers) --- */
+      const people = uniq(d.standings.map((r) => r.Player)).filter(Boolean);
+      const allYears = uniq(d.standings.map((r) => r.Year)).sort((a, b) => a - b);
+      const finishedYears = uniq(done.map((r) => r.Year)).sort((a, b) => a - b);
+      const lastPlaceOf = (y) => Math.max.apply(null, done.filter((r) => r.Year === y).map((r) => num(r.Place)));
+      const career = people.map((p) => {
+        const mine = done.filter((r) => r.Player === p);
+        const yearsOf = (f) => mine.filter(f).map((r) => r.Year).sort();
+        const reg = regRows.filter((r) => r.Player === p);
+        const w = reg.reduce((s, r) => s + (num(r.Win) || 0), 0), l = reg.reduce((s, r) => s + (num(r.Loss) || 0), 0);
+        let run = 0, bestRun = 0, bestEnd = "", dry = 0, bestDry = 0, dryEnd = "";
+        finishedYears.forEach((y) => {
+          const r = mine.find((x) => x.Year === y);
+          if (!r) { run = 0; dry = 0; return; }
+          if (num(r.Place) <= 6) { run++; dry = 0; if (run > bestRun) { bestRun = run; bestEnd = y; } }
+          else { dry++; run = 0; if (dry > bestDry) { bestDry = dry; dryEnd = y; } }
+        });
+        return { p: p, titles: yearsOf((r) => num(r.Place) === 1), seconds: yearsOf((r) => num(r.Place) === 2),
+          lasts: yearsOf((r) => num(r.Place) === lastPlaceOf(r.Year)), run: bestRun, runEnd: bestEnd, dry: bestDry, dryEnd: dryEnd,
+          wpct: w + l ? w / (w + l) : NaN, w: w, l: l, ppg: reg.length ? reg.reduce((s, r) => s + num(r.Points), 0) / reg.length : NaN,
+          total: ag.filter((r) => r.Player === p).reduce((s, r) => s + num(r.Points), 0) };
+      });
+      const hof = (label, val, show, detail) => {
+        const h = best(career, val, false);
+        if (h && h.v > 0) add("Hall of Fame", label, h, show(h.v, h.r), h.r.p, detail(h.r), "");
+      };
+      hof("Most titles", (c) => c.titles.length, (v) => String(v), (c) => c.titles.join(", "));
+      hof("Most runner-up finishes", (c) => c.seconds.length, (v) => String(v), (c) => c.seconds.join(", "));
+      hof("Most last-place finishes", (c) => c.lasts.length, (v) => String(v), (c) => c.lasts.join(", "));
+      hof("Longest playoff streak", (c) => c.run, (v) => v + (v === 1 ? " season" : " seasons"), (c) => "Through " + c.runEnd);
+      hof("Longest playoff drought", (c) => c.dry, (v) => v + (v === 1 ? " season" : " seasons"), (c) => "Through " + c.dryEnd);
+      const noRing = career.filter((c) => !c.titles.length);
+      const nr = best(noRing, (c) => c.seconds.length, false);
+      if (nr && nr.v > 0) add("Hall of Fame", "Most title games without a title", nr, String(nr.v), nr.r.p, "Lost the final in " + nr.r.seconds.join(", "), "");
+      hof("Best career win %", (c) => c.wpct, (v, c) => pct(v), (c) => "Regular season: " + c.w + "-" + c.l);
+      hof("Best career points per game", (c) => c.ppg, (v) => v.toFixed(2), () => "Regular season");
+      hof("Most points all-time", (c) => c.total, (v) => v.toFixed(1), () => "All games, playoffs included");
+
+      /* --- more streaks --- */
+      const chrono = (p, rows) => rows.filter((r) => r.Player === p).sort((a, b) => gKey(a) - gKey(b));
+      const longestRun = (rows, test) => {
+        let top = null;
+        people.forEach((p) => {
+          const g = chrono(p, rows);
+          let run = 0, start = 0;
+          g.forEach((r, i) => {
+            if (test(r)) { if (run === 0) start = i; run++; if (!top || run > top.n) top = { n: run, p: p, a: g[start], b: r }; }
+            else run = 0;
+          });
+        });
+        return top;
+      };
+      const runRow = (label, t, unit) => {
+        if (t) add("Streaks", label, t, t.n + " " + unit, t.p,
+          "From " + when(t.a.Year, t.a.Week, t.p, t.a.Opponent) + " to " + when(t.b.Year, t.b.Week, t.p, t.b.Opponent), "");
+      };
+      runRow("Longest 130+ point streak", longestRun(ag, (r) => num(r.Points) >= 130), "games");
+      const wkAvg = {};
+      Object.keys(weekRows).forEach((k) => (wkAvg[k] = weekRows[k].reduce((s, r) => s + num(r.Points), 0) / weekRows[k].length));
+      runRow("Longest above-average streak", longestRun(regRows, (r) => num(r.Points) > wkAvg[r.Year + "|" + r.Week]), "weeks");
+      const weekHigh = {};
+      Object.keys(weekRows).forEach((k) => (weekHigh[k] = Math.max.apply(null, weekRows[k].map((r) => num(r.Points)))));
+      runRow("Most consecutive weekly high scores", longestRun(regRows, (r) => num(r.Points) === weekHigh[r.Year + "|" + r.Week]), "weeks");
+
+      /* --- rivalries --- */
+      const pairs = {};
+      ag.forEach((r) => {
+        if (!r.Opponent || r.Player > r.Opponent) return;
+        const k = r.Player + "|" + r.Opponent;
+        const o = pairs[k] = pairs[k] || { a: r.Player, b: r.Opponent, aw: 0, bw: 0, n: 0, diff: 0 };
+        o.n++; o.diff += num(r.Points) - num(r["Opp Points"]);
+        if (num(r.Win) === 1) o.aw++; else if (num(r.Loss) === 1) o.bw++;
+      });
+      const pl = Object.values(pairs);
+      const rivLink = (o) => link("rivalries/" + enc(o.a) + "/" + enc(o.b), "Full rivalry");
+      const lop = best(pl.filter((o) => o.n >= 3), (o) => Math.abs(o.aw - o.bw) + o.n / 1000, false);
+      if (lop) { const o = lop.r, aTop = o.aw >= o.bw; add("Rivalries", "Most lopsided rivalry", lop, (aTop ? o.aw + "-" + o.bw : o.bw + "-" + o.aw), aTop ? o.a : o.b, "vs " + esc(aTop ? o.b : o.a), rivLink(o)); }
+      const mp = best(pl, (o) => o.n, false);
+      if (mp) add("Rivalries", "Most played matchup", mp, mp.v + " games", mp.r.a, "vs " + esc(mp.r.b) + ", series " + mp.r.aw + "-" + mp.r.bw, rivLink(mp.r));
+      const pd = best(pl, (o) => Math.abs(o.diff), false);
+      if (pd) { const o = pd.r, aTop = o.diff >= 0; add("Rivalries", "Biggest rivalry point differential", pd, "+" + pd.v.toFixed(1), aTop ? o.a : o.b, "vs " + esc(aTop ? o.b : o.a) + " over " + o.n + " games", rivLink(o)); }
+
+      /* --- more lineup records --- */
+      const perfect = {};
+      lu.forEach((r) => {
+        if (num(r.Efficiency) < 0.9995) return;
+        perfect[r.Manager] = (perfect[r.Manager] || 0) + 1;
+        const k = r.Year + "|" + r.Manager; perfect[k] = (perfect[k] || 0) + 1;
+      });
+      const perfSeason = best(Object.keys(perfect).filter((k) => k.includes("|")).map((k) => ({ y: k.split("|")[0], m: k.split("|")[1], n: perfect[k] })), (o) => o.n, false);
+      if (perfSeason) add("Lineup records", "Most perfect lineups (season)", perfSeason, String(perfSeason.v), perfSeason.r.m, "Started the best possible lineup", link("season/" + perfSeason.r.y, perfSeason.r.y + " season"));
+      const perfCareer = best(people.map((p) => ({ p: p, n: perfect[p] || 0 })), (o) => o.n, false);
+      if (perfCareer && perfCareer.v > 0) add("Lineup records", "Most perfect lineups (career)", perfCareer, String(perfCareer.v), perfCareer.r.p, "Weeks 1–14, all seasons", "");
+      const effSeason = {};
+      lu.forEach((r) => { const k = r.Year + "|" + r.Manager; const o = effSeason[k] = effSeason[k] || { y: r.Year, m: r.Manager, s: 0, n: 0 }; if (isNum(r.Efficiency)) { o.s += num(r.Efficiency); o.n++; } });
+      const be = best(Object.values(effSeason).filter((o) => o.n >= 6), (o) => o.s / o.n, false);
+      if (be) add("Lineup records", "Best lineup efficiency (season)", be, pct(be.v), be.r.m, "Average over " + be.r.n + " weeks", link("season/" + be.r.y, be.r.y + " season"));
+      const startedReal = d.rosters.filter((r) => r.Started === "Yes" && isNum(r.Week) && +r.Week <= 14);
+      const byeC = {}, zeroC = {};
+      startedReal.forEach((r) => {
+        if (/bye/i.test(r.Note || "")) byeC[r.Manager] = (byeC[r.Manager] || 0) + 1;
+        else if (isNum(r.Points) && num(r.Points) === 0) zeroC[r.Manager] = (zeroC[r.Manager] || 0) + 1;
+      });
+      const bye = best(Object.keys(byeC).map((m) => ({ m: m, n: byeC[m] })), (o) => o.n, false);
+      if (bye) add("Lineup records", "Most players started on a bye (career)", bye, String(bye.v), bye.r.m, "Weeks 1–14, all seasons", "");
+      const zero = best(Object.keys(zeroC).map((m) => ({ m: m, n: zeroC[m] })), (o) => o.n, false);
+      if (zero) add("Lineup records", "Most zero-point starts (career)", zero, String(zero.v), zero.r.m, "Started a player who scored 0", "");
+
+      /* --- transactions --- */
+      const mv = d.moves.filter((r) => r.Player && r.Manager);
+      const tr = {};
+      mv.filter((r) => r["How Acquired"] === "Trade" && r.From).forEach((r) => {
+        const pair = [r.Manager, r.From].sort(), k = r.Year + "|" + r["First Week"] + "|" + pair.join("|");
+        const t = tr[k] = tr[k] || { y: r.Year, w: r["First Week"], a: pair[0], b: pair[1], got: {} };
+        (t.got[r.Manager] = t.got[r.Manager] || []).push(r);
+      });
+      const tv = (t, m) => (t.got[m] || []).reduce((s, r) => s + (num(r.Value) || 0), 0);
+      const bt = best(Object.values(tr), (t) => Math.abs(tv(t, t.a) - tv(t, t.b)), false);
+      if (bt) {
+        const t = bt.r, aWin = tv(t, t.a) >= tv(t, t.b), win = aWin ? t.a : t.b, lose = aWin ? t.b : t.a;
+        add("Transactions", "Biggest trade win", bt, "+" + bt.v.toFixed(1) + " value", win,
+          "Got " + (t.got[win] || []).map((r) => plink(r.Player)).join(", ") + " from " + esc(lose) + " for " + ((t.got[lose] || []).map((r) => plink(r.Player)).join(", ") || "nothing tracked"),
+          link("trades/" + t.y, t.y + " · Wk " + t.w));
+      }
+      const mvRec = (label, how) => {
+        const h = best(mv.filter((r) => r["How Acquired"] === how), (r) => num(r.Value), false);
+        if (h) add("Transactions", label, h, signed(h.v) + " value", h.r.Manager,
+          plink(h.r.Player) + " (" + esc(h.r.Pos || "") + "): " + esc(h.r.Starts) + " starts, " + fmt(h.r["Started Pts"], 1) + " pts", link("trades/" + h.r.Year, h.r.Year + " season"));
+      };
+      mvRec("Best waiver pickup", "Waiver");
+      mvRec("Best draft value", "Draft");
+      const owners = {};
+      d.rosters.forEach((r) => { if (r.Player && r.Player !== "(Empty)") (owners[r.Player] = owners[r.Player] || new Set()).add(r.Manager); });
+      const jm = best(Object.keys(owners).map((p) => ({ p: p, n: owners[p].size })), (o) => o.n, false);
+      if (jm) add("Transactions", "Journeyman", jm, jm.v + " managers", "", plink(jm.r.p) + " has been on " + Array.from(owners[jm.r.p]).map(esc).join(", "), "");
+      const carry = best(d.mvps, (r) => num(r["Share of Team Pts"]), false);
+      if (carry) add("Transactions", "MVP who carried the most", carry, pct(carry.v, 0) + " of team pts", carry.r.Manager,
+        plink(carry.r.MVP) + " (" + esc(carry.r.Pos || "") + "), " + fmt(carry.r["Started Pts"], 1) + " started pts", link("season/" + carry.r.Year, carry.r.Year + " season"));
+
+      /* --- more projection records --- */
+      const pjAgg = {};
+      pj.forEach((r) => {
+        const k = r.Year + "|" + r.Manager;
+        const o = pjAgg[k] = pjAgg[k] || { y: r.Year, m: r.Manager, uw: 0, de: 0, n: 0 };
+        o.uw += num(r["Upset Win"]) || 0;
+        if (isNum(r["Decision Eff"])) { o.de += num(r["Decision Eff"]); o.n++; }
+      });
+      const pa = Object.values(pjAgg);
+      const uwin = best(pa, (o) => o.uw, false);
+      if (uwin && uwin.v > 0) add("Projections", "Most upset wins (season)", uwin, String(uwin.v), uwin.r.m, "Won games they were projected to lose", link("season/" + uwin.r.y, uwin.r.y + " season"));
+      const bde = best(pa.filter((o) => o.n >= 6), (o) => o.de / o.n, false);
+      if (bde) add("Projections", "Best decision efficiency (season)", bde, pct(bde.v), bde.r.m, "Started Yahoo's highest-projected lineup most often", link("season/" + bde.r.y, bde.r.y + " season"));
+
+      // put sections in a sensible order
+      const ORDER = ["Game records", "Season records", "Hall of Fame", "Streaks", "Rivalries", "Lineup records", "Transactions", "Projections"];
+      out.sort((a, b) => ORDER.indexOf(a.sec) - ORDER.indexOf(b.sec));
+
       /* --- render the record sections --- */
       const secs = uniq(out.map((o) => o.sec));
       let html = '<div class="hero"><span class="kicker">League history</span><h1>Records</h1></div>' +
@@ -649,7 +885,7 @@
       secs.forEach((sec) => {
         html += section(sec, '<div class="scroll"><table class="records"><thead><tr><th scope="col">Record</th><th scope="col" class="num">Value</th><th scope="col">Manager</th><th scope="col">Detail</th><th scope="col">When</th></tr></thead><tbody>' +
           out.filter((o) => o.sec === sec).map((o) =>
-            '<tr><td class="rec-label">' + esc(o.label) + '</td><td class="num rec-val">' + esc(o.value) + '</td><td class="name">' + link("career/" + enc(o.manager), o.manager) +
+            '<tr><td class="rec-label">' + esc(o.label) + '</td><td class="num rec-val">' + esc(o.value) + '</td><td class="name">' + (o.manager ? link("career/" + enc(o.manager), o.manager) : "—") +
             '</td><td class="detail">' + o.detail + '</td><td class="when">' + o.when + "</td></tr>").join("") + "</tbody></table></div>");
       });
 
