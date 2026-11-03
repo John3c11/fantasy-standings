@@ -192,13 +192,22 @@
       (String(it) === String(current) ? ' aria-current="page"' : "") + ">" + esc(it) + "</a>").join("") + "</div>";
   }
 
-  function scoreCard(g, label) {
+  // Who won: higher score, unless the Winner cell in Games says "Tie" (e.g. the 2022 final).
+  const declaredTie = (g) => /^tie$/i.test(String(g.Winner || "").trim());
+  function gameWinner(g) {
+    if (declaredTie(g)) return "";
     const a = num(g["P1 Points"]), b = num(g["P2 Points"]);
+    return a > b ? g["Player 1"] : b > a ? g["Player 2"] : "";
+  }
+
+  function scoreCard(g, label) {
+    const a = num(g["P1 Points"]), b = num(g["P2 Points"]), w = gameWinner(g);
+    if (!w) label = (label ? label + " · " : "") + (declaredTie(g) ? "Declared a tie" : "Tie");
     const row = (who, pts, won) => '<div class="game-row' + (won ? " won" : "") + '"><span class="who">' + esc(who) +
       '</span><span class="pts">' + pts.toFixed(2) + "</span></div>";
     return '<a class="game" href="#/game/' + gameRoute(g.Year, g.Week, g["Player 1"], g["Player 2"]) + '" aria-label="Box score: ' +
       esc(g["Player 1"]) + " vs " + esc(g["Player 2"]) + '">' + (label ? '<div class="game-label">' + esc(label) + "</div>" : "") +
-      row(g["Player 1"], a, a > b) + row(g["Player 2"], b, b > a) + "</a>";
+      row(g["Player 1"], a, w === g["Player 1"]) + row(g["Player 2"], b, w === g["Player 2"]) + "</a>";
   }
 
   function gameRoute(y, w, a, b) { return [y, w, a, b].map(enc).join("/"); }
@@ -443,7 +452,8 @@
     const projected = !post.length && Math.max.apply(null, regWeeks.concat([0])) < 14;
     const byLabel = (re) => post.filter((g) => re.test(g.Week));
     const has = (g, m) => g && (g["Player 1"] === m || g["Player 2"] === m);
-    const winner = (g) => (g && g.played ? (num(g["P1 Points"]) >= num(g["P2 Points"]) ? g["Player 1"] : g["Player 2"]) : "");
+    const winner = (g) => (g && g.played ? gameWinner(g) : "");
+    const tied = (g) => g && g.played && !gameWinner(g);
     const loser = (g) => (g && g.played ? (winner(g) === g["Player 1"] ? g["Player 2"] : g["Player 1"]) : "");
     const mark = (g) => (g ? Object.assign({ played: true }, g) : null);
     const stub = (a, b, wk) => ({ "Player 1": a || "", "Player 2": b || "", Week: wk, Year: yr, played: false });
@@ -461,10 +471,11 @@
       Object.assign(r1Top, r1Bot); Object.assign(r1Bot, t);
     }
     const champ = winner(final);
+    const coChamps = tied(final) ? [final["Player 1"], final["Player 2"]] : null;
 
     const line = (g, side, other) => {
       const m = g[side], pts = num(g[side === "Player 1" ? "P1 Points" : "P2 Points"]);
-      const won = g.played && m === winner(g);
+      const won = g.played && (m === winner(g) || tied(g));
       return '<div class="bk-team' + (won ? " won" : "") + (g.played && !won ? " out" : "") + '"><span class="bk-seed">' + (m && seedOf[m] ? seedOf[m] : "") +
         '</span><span class="bk-name">' + (m ? esc(m) : "TBD") + '</span><span class="bk-pts">' + (g.played ? pts.toFixed(2) : "") + "</span></div>";
     };
@@ -488,8 +499,10 @@
       '<div class="bk-col"><div class="bk-head">Final</div><div class="bk-slots">' +
         '<div class="bk-slot">' + box(final) + "</div></div></div>" +
       '<div class="bk-col last"><div class="bk-head">Champion</div><div class="bk-slots">' +
-        '<div class="bk-slot"><div class="bk-champ' + (champ ? "" : " tbd") + '">' +
-        (champ ? '<span class="bk-trophy">Champion</span>' + link("career/" + enc(champ), champ) : "TBD") +
+        '<div class="bk-slot"><div class="bk-champ' + (champ || coChamps ? "" : " tbd") + '">' +
+        (coChamps ? '<span class="bk-trophy">Co-champions</span>' + coChamps.map((m) => link("career/" + enc(m), m)).join("") +
+          (declaredTie(final) ? '<span class="bk-why">Final declared a tie</span>' : "")
+          : champ ? '<span class="bk-trophy">Champion</span>' + link("career/" + enc(champ), champ) : "TBD") +
         "</div></div></div></div>" +
       "</div></div>" +
       '<p class="note bk-note">Byes: ' + esc(s1) + " (1 seed) and " + esc(s2) + " (2 seed). Seeds by regular-season wins, then points for.</p>";
@@ -1565,6 +1578,7 @@
       if (!g) return '<div class="state">Game not found.</div>';
       const p1 = g["Player 1"], p2 = g["Player 2"];
       const s1 = num(g["P1 Points"]), s2 = num(g["P2 Points"]);
+      const gw = gameWinner(g);
       const rw = rosterWeek(w);
       const posOf = {};
       d.positions.forEach((r) => { if (r.Player) posOf[r.Player] = r["Final Pos"] || r["Derived Pos"]; });
@@ -1602,7 +1616,8 @@
 
       const wkLabel = isRegularWeek(w) ? "Week " + w : w;
       return '<div class="hero"><span class="kicker">' + esc(y) + " · " + esc(wkLabel) + '</span><h1>' + esc(p1) + " vs " + esc(p2) + "</h1></div>" +
-        '<div class="box-grid">' + side(p1, s1, s1 > s2) + side(p2, s2, s2 > s1) + "</div>" +
+        (declaredTie(g) ? '<p class="note"><b>Declared a tie</b> by the league, whatever the final scores say.</p>' : "") +
+        '<div class="box-grid">' + side(p1, s1, gw === p1) + side(p2, s2, gw === p2) + "</div>" +
         '<p class="note">Highlighted bench score = the best player left on the bench. ' + (isRegularWeek(w) ? link("games/" + enc(y) + "/" + enc(w), "← All " + wkLabel + " games") : link("games/" + enc(y) + "/bracket", "← " + y + " bracket")) +
         " · " + link("rivalries/" + enc(p1) + "/" + enc(p2), "Full rivalry") + "</p>";
     });
