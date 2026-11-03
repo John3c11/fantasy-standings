@@ -333,3 +333,4 @@ a.bk-match:hover { border-color: var(--amber); color: var(--chalk); }
   .bk-slots { gap: 12px; }
   .bk-slots.join::before, .bk-slots.join::after, .bk-col:not(.last) .bk-slot > .bk-match::after { display: none; }
 }
+.chip.bracket-chip { border-color: var(--amber); }

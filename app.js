@@ -59,9 +59,27 @@
           if (!r.ok) throw new Error("HTTP " + r.status);
           return r.text();
         })
-        .then((t) => toObjects(parseCSV(t)));
+        .then((t) => toObjects(parseCSV(t)))
+        .then((rows) => (tab === "games" ? tidyNames(rows, ["Player 1", "Player 2", "Winner"]) : rows));
     }
     return cache[tab];
+  }
+
+  // "keenan", "Keenan " or "Keen​an" in a typed row all become the usual "Keenan"
+  function tidyNames(rows, cols) {
+    const key = (v) => v.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    const counts = {};
+    rows.forEach((r) => cols.forEach((c) => {
+      if (!r[c]) return;
+      const k = key(r[c]);
+      (counts[k] = counts[k] || {})[r[c]] = (counts[k][r[c]] || 0) + 1;
+    }));
+    const best = {};
+    Object.keys(counts).forEach((k) => {
+      best[k] = Object.keys(counts[k]).sort((a, b) => counts[k][b] - counts[k][a])[0];
+    });
+    rows.forEach((r) => cols.forEach((c) => { if (r[c]) r[c] = best[key(r[c])]; }));
+    return rows;
   }
 
   function loadMany(names) {
@@ -345,8 +363,9 @@
         rowClass: (r) => (num(r.Place) === 1 ? "gold" : num(r.Place) === lastPlace ? "last" : ""),
       }), "Tap a column to sort"));
 
-      const br = playoffBracket(d.games, yr);
-      if (br) html.push(br);
+      const post = playedGames(d.games).filter((g) => g.Year === yr && !isRegularWeek(g.Week));
+      if (post.length) html.push(section("Playoffs", '<div class="scores">' + post.map((g) => scoreCard(g, g.Week)).join("") + "</div>",
+        link("games/" + enc(yr) + "/bracket", "See the bracket →")));
 
       const mv = d.mvps.filter((r) => r.Year === yr);
       if (mv.length) html.push(section("Team MVPs", table("season-mvp-" + yr, [
@@ -1480,13 +1499,18 @@
       const yr = yrs.includes(yArg) ? yArg : yrs[0];
       const inYear = played.filter((g) => g.Year === yr);
       const weeks = uniq(inYear.map((g) => g.Week)).sort((a, b) => weekSortKey(a) - weekSortKey(b));
-      const wk = weeks.includes(wArg) ? wArg : weeks[weeks.length - 1];
+      const showBracket = wArg === "bracket";
+      const wk = showBracket ? "bracket" : weeks.includes(wArg) ? wArg : weeks[weeks.length - 1];
       const games = inYear.filter((g) => g.Week === wk);
       const label = (w) => (isRegularWeek(w) ? "Wk " + w : w);
-      return '<div class="hero"><span class="kicker">Game log</span><h1>' + esc(yr) + " · " + esc(isRegularWeek(wk) ? "Week " + wk : wk) + "</h1></div>" +
+      const chip = (w, text) => '<a class="chip' + (w === wk ? " on" : "") + (w === "bracket" ? " bracket-chip" : "") + '" href="#/games/' + enc(yr) + "/" + enc(w) + '"' +
+        (w === wk ? ' aria-current="page"' : "") + ">" + esc(text) + "</a>";
+      const head = '<div class="hero"><span class="kicker">Game log</span><h1>' + esc(yr) + " · " +
+        esc(showBracket ? "Playoff bracket" : isRegularWeek(wk) ? "Week " + wk : wk) + "</h1></div>" +
         chips(yrs, yr, (y) => "games/" + y) +
-        '<div class="chips weeks">' + weeks.map((w) =>
-          '<a class="chip' + (w === wk ? " on" : "") + '" href="#/games/' + enc(yr) + "/" + enc(w) + '"' + (w === wk ? ' aria-current="page"' : "") + ">" + esc(label(w)) + "</a>").join("") + "</div>" +
+        '<div class="chips weeks">' + chip("bracket", "Bracket") + weeks.map((w) => chip(w, label(w))).join("") + "</div>";
+      if (showBracket) return head + (playoffBracket(d.games, yr) || '<div class="state">Not enough games yet to draw a bracket.</div>');
+      return head +
         '<p class="note">Tap a game for both lineups.</p>' +
         '<div class="scores">' + games.map((g) => scoreCard(g)).join("") + "</div>";
     });
