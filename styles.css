@@ -362,3 +362,42 @@ table.toilet tr.tb-loser { background: rgba(122, 31, 31, 0.55); }
 table.ranks tr.tier-row td { background: var(--endzone); color: var(--chalk); font-size: 13px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; padding-top: 6px; padding-bottom: 6px; }
 table.ranks td.rk { font-family: var(--mono); color: var(--amber); }
 p.finishes { margin-top: -6px; }
+
+/* ---------- records: top 5 ---------- */
+table.records tbody.rec-group + tbody.rec-group tr td,
+table.records tbody.rec-alts + tbody.rec-group tr td { border-top: 2px solid var(--line); }
+.rec-more { margin-left: 10px; font-family: var(--display); font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--amber); background: transparent; border: 2px solid var(--amber); padding: 2px 8px; cursor: pointer; vertical-align: middle; }
+.rec-more::after { content: " ▾"; }
+.rec-more[aria-expanded="true"] { background: var(--amber); color: #111; }
+.rec-more[aria-expanded="true"]::after { content: " ▴"; }
+table.records tr.alt td { background: rgba(10, 30, 18, 0.35); font-size: 0.92em; border-top: 1px dashed var(--line); }
+table.records tr.alt td.num { color: var(--chalk-dim); font-family: var(--mono); }
+table.records td.rec-rank { font-family: var(--mono); color: var(--chalk-dim); text-align: right; padding-right: 18px; }
+
+/* ---------- trades ledger ---------- */
+.chips.tabs { margin-bottom: 4px; }
+.tag { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: var(--chalk-dim); border: 1px solid var(--line); padding: 0 5px; margin-left: 4px; vertical-align: middle; }
+.tl-list { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.tl { background: #111311; border: 2px solid var(--line); }
+.tl-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 2px solid var(--line);
+  font-size: 14px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--chalk-dim); }
+.tl-verdict { color: #111; background: var(--amber); padding: 2px 8px; letter-spacing: 0.08em; }
+.tl-verdict.even { background: transparent; color: var(--chalk-dim); border: 1px solid var(--line); }
+.tl-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.tl-side { padding: 10px 14px 12px; border-left: 4px solid transparent; }
+.tl-side + .tl-side { border-left: 2px solid var(--line); }
+.tl-side.won { border-left: 4px solid var(--amber); background: rgba(255, 176, 0, 0.06); }
+.tl-who { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 15px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--chalk-dim); margin-bottom: 6px; }
+.tl-who a { color: var(--chalk); font-size: 20px; font-weight: 800; text-decoration: none; margin-right: 4px; }
+.tl-val { font-family: var(--mono); font-size: 20px; }
+.tl ul { list-style: none; margin: 0; padding: 0; }
+.tl li { display: flex; align-items: baseline; gap: 6px; padding: 4px 0; font-size: 17px; }
+.tl li + li { border-top: 1px dashed var(--line); }
+.tl-pv { margin-left: auto; font-family: var(--mono); font-size: 16px; }
+@media (max-width: 600px) {
+  .tl-body { grid-template-columns: minmax(0, 1fr); }
+  .tl-side + .tl-side { border-left: 4px solid transparent; border-top: 2px solid var(--line); }
+  .tl-side.won + .tl-side, .tl-side + .tl-side.won { border-left-width: 4px; }
+  .tl-side + .tl-side.won { border-left-color: var(--amber); }
+}
