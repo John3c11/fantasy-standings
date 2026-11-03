@@ -345,8 +345,8 @@
         rowClass: (r) => (num(r.Place) === 1 ? "gold" : num(r.Place) === lastPlace ? "last" : ""),
       }), "Tap a column to sort"));
 
-      const post = playedGames(d.games).filter((g) => g.Year === yr && !isRegularWeek(g.Week));
-      if (post.length) html.push(section("Playoffs", '<div class="scores">' + post.map((g) => scoreCard(g, g.Week)).join("") + "</div>"));
+      const br = playoffBracket(d.games, yr);
+      if (br) html.push(br);
 
       const mv = d.mvps.filter((r) => r.Year === yr);
       if (mv.length) html.push(section("Team MVPs", table("season-mvp-" + yr, [
@@ -373,6 +373,109 @@
         "Proj Luck = actual wins − projected wins"));
       return html.join("");
     });
+  }
+
+  /* ============================== playoff bracket ============================== */
+
+  // Seeds = regular-season wins, then points for (top 6 make it, top 2 get byes).
+  function seedsFor(games, yr) {
+    const t = {};
+    playedGames(games).filter((g) => g.Year === yr && isRegularWeek(g.Week) && +g.Week <= 14).forEach((g) => {
+      const a = num(g["P1 Points"]), b = num(g["P2 Points"]);
+      [[g["Player 1"], a, b], [g["Player 2"], b, a]].forEach(([m, pf, pa]) => {
+        const o = (t[m] = t[m] || { m: m, w: 0, pf: 0 });
+        o.pf += pf;
+        if (pf > pa) o.w += 1; else if (pf === pa) o.w += 0.5;
+      });
+    });
+    return Object.values(t).sort((x, y) => y.w - x.w || y.pf - x.pf).map((o) => o.m);
+  }
+
+  function playoffBracket(games, yr) {
+    let seeds = seedsFor(games, yr);
+    if (seeds.length < 6) return "";
+    {
+      const pg = playedGames(games).filter((g) => g.Year === yr);
+      const inR = (re) => new Set(pg.filter((g) => re.test(g.Week)).flatMap((g) => [g["Player 1"], g["Player 2"]]));
+      const r1s = inR(/round\s*1/i), r2s = inR(/round\s*2/i);
+      if (r1s.size === 4) {
+        const byes = r2s.size ? seeds.filter((m) => r2s.has(m) && !r1s.has(m)) : [];
+        if (byes.length === 2 || !r2s.size) {
+          const top2 = byes.length === 2 ? byes : seeds.filter((m) => !r1s.has(m)).slice(0, 2);
+          seeds = top2.concat(seeds.filter((m) => r1s.has(m)), seeds.filter((m) => !r1s.has(m) && !top2.includes(m)));
+        }
+      }
+    }
+    const seedOf = {};
+    seeds.forEach((m, i) => (seedOf[m] = i + 1));
+    const post = playedGames(games).filter((g) => g.Year === yr && !isRegularWeek(g.Week));
+    const regWeeks = playedGames(games).filter((g) => g.Year === yr && isRegularWeek(g.Week)).map((g) => +g.Week);
+    const projected = !post.length && Math.max.apply(null, regWeeks.concat([0])) < 14;
+    const byLabel = (re) => post.filter((g) => re.test(g.Week));
+    const has = (g, m) => g && (g["Player 1"] === m || g["Player 2"] === m);
+    const winner = (g) => (g && g.played ? (num(g["P1 Points"]) >= num(g["P2 Points"]) ? g["Player 1"] : g["Player 2"]) : "");
+    const loser = (g) => (g && g.played ? (winner(g) === g["Player 1"] ? g["Player 2"] : g["Player 1"]) : "");
+    const mark = (g) => (g ? Object.assign({ played: true }, g) : null);
+    const stub = (a, b, wk) => ({ "Player 1": a || "", "Player 2": b || "", Week: wk, Year: yr, played: false });
+    const r1 = byLabel(/round\s*1/i), r2 = byLabel(/round\s*2/i), fin = byLabel(/round\s*3|final|champ/i);
+    const [s1, s2, s3, s4, s5, s6] = seeds;
+    // Round 1: 4v5 feeds the 1 seed, 3v6 feeds the 2 seed
+    const r1Top = mark(r1.find((g) => has(g, s4) || has(g, s5))) || stub(s4, s5, "Round 1");
+    const r1Bot = mark(r1.find((g) => has(g, s3) || has(g, s6))) || stub(s3, s6, "Round 1");
+    const semiTop = mark(r2.find((g) => has(g, s1))) || stub(s1, winner(r1Top), "Round 2");
+    const semiBot = mark(r2.find((g) => has(g, s2))) || stub(s2, winner(r1Bot), "Round 2");
+    const final = mark(fin[0]) || stub(winner(semiTop), winner(semiBot), "Round 3");
+    // if the league re-seeded, draw each Round 1 game next to the semifinal its winner actually played in
+    if (r1Top.played && r1Bot.played && semiTop.played && has(semiTop, winner(r1Bot)) && !has(semiTop, winner(r1Top))) {
+      const t = Object.assign({}, r1Top);
+      Object.assign(r1Top, r1Bot); Object.assign(r1Bot, t);
+    }
+    const champ = winner(final);
+
+    const line = (g, side, other) => {
+      const m = g[side], pts = num(g[side === "Player 1" ? "P1 Points" : "P2 Points"]);
+      const won = g.played && m === winner(g);
+      return '<div class="bk-team' + (won ? " won" : "") + (g.played && !won ? " out" : "") + '"><span class="bk-seed">' + (m && seedOf[m] ? seedOf[m] : "") +
+        '</span><span class="bk-name">' + (m ? esc(m) : "TBD") + '</span><span class="bk-pts">' + (g.played ? pts.toFixed(2) : "") + "</span></div>";
+    };
+    const box = (g) => {
+      // higher seed on top
+      const flip = g["Player 1"] && g["Player 2"] && (seedOf[g["Player 1"]] || 99) > (seedOf[g["Player 2"]] || 99);
+      const inner = flip ? line(g, "Player 2") + line(g, "Player 1") : line(g, "Player 1") + line(g, "Player 2");
+      return g.played
+        ? '<a class="bk-match" href="#/game/' + gameRoute(g.Year, g.Week, g["Player 1"], g["Player 2"]) + '" aria-label="Box score: ' + esc(g["Player 1"]) + " vs " + esc(g["Player 2"]) + '">' + inner + "</a>"
+        : '<div class="bk-match pending">' + inner + "</div>";
+    };
+
+    const bracket =
+      '<div class="scroll"><div class="bracket">' +
+      '<div class="bk-col"><div class="bk-head">Round 1</div><div class="bk-slots">' +
+        '<div class="bk-slot">' + box(r1Top) + "</div>" +
+        '<div class="bk-slot">' + box(r1Bot) + "</div></div></div>" +
+      '<div class="bk-col"><div class="bk-head">Semifinals</div><div class="bk-slots join">' +
+        '<div class="bk-slot">' + box(semiTop) + "</div>" +
+        '<div class="bk-slot">' + box(semiBot) + "</div></div></div>" +
+      '<div class="bk-col"><div class="bk-head">Final</div><div class="bk-slots">' +
+        '<div class="bk-slot">' + box(final) + "</div></div></div>" +
+      '<div class="bk-col last"><div class="bk-head">Champion</div><div class="bk-slots">' +
+        '<div class="bk-slot"><div class="bk-champ' + (champ ? "" : " tbd") + '">' +
+        (champ ? '<span class="bk-trophy">Champion</span>' + link("career/" + enc(champ), champ) : "TBD") +
+        "</div></div></div></div>" +
+      "</div></div>" +
+      '<p class="note bk-note">Byes: ' + esc(s1) + " (1 seed) and " + esc(s2) + " (2 seed). Seeds by regular-season wins, then points for.</p>";
+
+    // everything else: 3rd place, 5th place, toilet bowl
+    const used = new Set([r1Top, r1Bot, semiTop, semiBot, final].filter((g) => g.played).map((g) => g.Week + "|" + g["Player 1"] + "|" + g["Player 2"]));
+    const rest = post.filter((g) => !used.has(g.Week + "|" + g["Player 1"] + "|" + g["Player 2"]))
+      .sort((a, b) => {
+        const k = (w) => (/3rd/i.test(w) ? 0 : /5th/i.test(w) ? 1 : 2) * 100 + rosterWeek(w);
+        return k(a.Week) - k(b.Week);
+      });
+    const consolation = rest.length
+      ? '<div class="bk-sub"><h3>Consolation games</h3><div class="scores">' + rest.map((g) => scoreCard(g, g.Week)).join("") + "</div></div>"
+      : "";
+    return section(projected ? "Playoff picture" : "Playoffs", bracket + consolation,
+      projected ? "If the season ended today" : "Top 6 make it · top 2 get a bye");
   }
 
   function projectionSummary(rows, filter, groupKey) {

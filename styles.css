@@ -298,3 +298,38 @@ a.tcard:hover { transform: translateY(-4px) rotate(-1deg); color: var(--chalk); 
 .cmvp { padding: 0 12px 10px; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--chalk-dim); }
 .card-detail { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 32px; align-items: start; }
 @media (max-width: 760px) { .card-detail { grid-template-columns: minmax(0, 1fr); } .tcard.big { max-width: 320px; } }
+
+/* ---------- playoff bracket ---------- */
+.bracket { display: grid; grid-template-columns: repeat(3, minmax(190px, 1fr)) minmax(150px, 0.8fr); gap: 0 34px; min-width: 760px; }
+.bk-col { display: flex; flex-direction: column; }
+.bk-head { font-size: 14px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--amber); padding-bottom: 10px; border-bottom: 2px solid var(--line); margin-bottom: 14px; }
+.bk-slots { position: relative; flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 22px; }
+.bk-slot { position: relative; display: flex; flex-direction: column; justify-content: center; gap: 8px; flex: 1; }
+.bk-match { position: relative; display: block; background: #111311; border: 3px solid var(--chalk); text-decoration: none; color: var(--chalk); }
+a.bk-match:hover { border-color: var(--amber); color: var(--chalk); }
+.bk-match.pending { border-style: dashed; border-color: var(--line); }
+/* connector out of every match except the final column */
+.bk-col:not(.last) .bk-slot > .bk-match::after { content: ""; position: absolute; left: 100%; top: 50%; width: 17px; border-top: 2px solid var(--chalk-dim); }
+/* semis: join the two into one line toward the final */
+.bk-slots.join::after { content: ""; position: absolute; right: -17px; top: 25%; bottom: 25%; border-right: 2px solid var(--chalk-dim); }
+.bk-slots.join::before { content: ""; position: absolute; right: -34px; top: 50%; width: 17px; border-top: 2px solid var(--chalk-dim); }
+.bk-team { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 10px; }
+.bk-team + .bk-team { border-top: 2px solid var(--line); }
+.bk-seed { font-family: var(--mono); font-size: 15px; color: var(--chalk-dim); }
+.bk-name { font-weight: 700; font-size: 18px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bk-pts { font-family: var(--mono); font-size: 20px; color: var(--chalk-dim); }
+.bk-team.won .bk-pts { color: var(--amber); }
+.bk-team.out .bk-name { color: var(--chalk-dim); }
+.bk-note { margin-top: 14px; }
+.bk-champ { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; background: var(--amber); color: #111; padding: 14px 16px; border: 3px solid var(--amber); }
+.bk-champ a { color: #111; font-size: 26px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; text-decoration: none; }
+.bk-champ a:hover { text-decoration: underline; color: #111; }
+.bk-champ.tbd { background: transparent; color: var(--chalk-dim); border: 3px dashed var(--line); font-weight: 700; letter-spacing: 0.1em; }
+.bk-trophy { font-size: 12px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; }
+.bk-sub { margin-top: 28px; }
+.bk-sub h3 { margin: 0 0 12px; font-size: 18px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+@media (max-width: 700px) {
+  .bracket { grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 22px; }
+  .bk-slots { gap: 12px; }
+  .bk-slots.join::before, .bk-slots.join::after, .bk-col:not(.last) .bk-slot > .bk-match::after { display: none; }
+}
