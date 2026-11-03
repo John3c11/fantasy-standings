@@ -1235,10 +1235,169 @@
     return Object.values(by);
   }
 
+  /* ============================== position rankings ============================== */
+
+  const RANK_POS = ["QB", "RB", "WR", "TE", "K", "DEF"];
+  // League-wide starters at each position (8 teams; FLEX adds RB/WR/TE depth) -> "starter-level week" cutoff
+  const STARTER_N = { QB: 8, RB: 20, WR: 20, TE: 10, K: 8, DEF: 8 };
+  const TIER_NAMES = ["Elite", "Strong starters", "Starters", "Flex & fill-ins", "Depth"];
+
+  function posLookup(d) {
+    if (d._posOf) return d._posOf;
+    const posOf = {};
+    d.positions.forEach((r) => { if (r.Player) posOf[r.Player] = String(r["Final Pos"] || r["Derived Pos"] || "").toUpperCase(); });
+    defenseNames(d.rosters, d.positions).forEach((n) => (posOf[n] = "DEF"));
+    Object.keys(posOf).forEach((k) => { if (isDefPos(posOf[k])) posOf[k] = "DEF"; });
+    return (d._posOf = posOf);
+  }
+
+  const rankCache = {};
+  // scope: "reg" = weeks 1-14, "all" = every week on file. Theme-team weeks (Counts = No) never count.
+  function positionRanks(d, yr, pos, scope) {
+    const key = yr + "|" + pos + "|" + scope;
+    if (rankCache[key]) return rankCache[key];
+    const posOf = posLookup(d);
+    const inScope = (r) => r.Year === yr && isNum(r.Week) && (scope === "all" || +r.Week <= 14) &&
+      r.Player && r.Player !== "(Empty)" && posOf[r.Player] === pos && (r.Counts === undefined || r.Counts === "" || r.Counts === "Yes");
+    const rows = d.rosters.filter(inScope);
+    // played = has a score, and isn't a 0 with a 0 projection (inactive)
+    const played = (r) => isNum(r.Points) && !(num(r.Points) === 0 && (!isNum(r["Proj Pts"]) || num(r["Proj Pts"]) === 0));
+    const seen = new Set(), weekly = {};
+    const by = {};
+    rows.forEach((r) => {
+      const wk = r.Player + "|" + r.Week;
+      if (seen.has(wk)) return;
+      seen.add(wk);
+      const o = (by[r.Player] = by[r.Player] || { name: r.Player, mgrs: [], gp: 0, tot: 0, starts: 0, top3: 0, topN: 0, best: -Infinity, bestWk: "" });
+      if (!o.mgrs.includes(r.Manager)) o.mgrs.push(r.Manager);
+      if (!played(r)) return;
+      const pts = num(r.Points);
+      o.gp++; o.tot += pts;
+      if (r.Started === "Yes") o.starts++;
+      if (pts > o.best) { o.best = pts; o.bestWk = r.Week; }
+      (weekly[r.Week] = weekly[r.Week] || []).push({ o: o, pts: pts });
+    });
+    const N = STARTER_N[pos] || 12;
+    Object.values(weekly).forEach((list) => {
+      list.sort((a, b) => b.pts - a.pts);
+      list.forEach((x, i) => { if (i < 3) x.o.top3++; if (i < N) x.o.topN++; });
+    });
+    const weeksInScope = uniq(rows.map((r) => r.Week)).length;
+    const minGames = Math.max(1, Math.min(6, Math.round(weeksInScope * 0.4)));
+    const all = Object.values(by).filter((o) => o.gp > 0);
+    all.forEach((o) => { o.ppg = o.tot / o.gp; o.startPct = o.starts / o.gp; });
+    const qual = all.filter((o) => o.gp >= minGames).sort((a, b) => b.ppg - a.ppg || b.tot - a.tot);
+    // replacement level = average PPG of the 3 players just outside starter range
+    const repl = qual.slice(N, N + 3);
+    const replPpg = repl.length ? repl.reduce((s, o) => s + o.ppg, 0) / repl.length : (qual.length ? qual[qual.length - 1].ppg : 0);
+    qual.forEach((o, i) => { o.rank = i + 1; o.por = o.tot - o.gp * replPpg; });
+    // tiers: aim for breaks near 25%, 60%, 100% and 150% of the starter count,
+    // then nudge each break to the biggest PPG drop nearby so tiers split where the talent does
+    const breaks = [];
+    [0.25, 0.6, 1, 1.5].forEach((f) => {
+      const target = Math.max(1, Math.round(N * f));
+      const lo = Math.max((breaks[breaks.length - 1] || 0) + 1, Math.round(target * 0.7)), hi = Math.min(qual.length - 1, Math.round(target * 1.3));
+      let bi = -1, bg = -1;
+      for (let i = lo; i <= hi; i++) { const g = qual[i - 1].ppg - qual[i].ppg; if (g > bg) { bg = g; bi = i; } }
+      if (bi > 0) breaks.push(bi);
+    });
+    let t = 0;
+    qual.forEach((o, i) => {
+      while (t < breaks.length && i >= breaks[t]) t++;
+      o.tier = Math.min(t, TIER_NAMES.length - 1);
+    });
+    const out = { pos: pos, yr: yr, scope: scope, N: N, list: qual, unq: all.length - qual.length, minGames: minGames, replPpg: replPpg, weeks: weeksInScope };
+    return (rankCache[key] = out);
+  }
+
+  // Each manager's starters at one position: points per week from that slot group
+  function positionRooms(d, yr, pos, scope) {
+    const posOf = posLookup(d);
+    const rows = d.rosters.filter((r) => r.Year === yr && isNum(r.Week) && (scope === "all" || +r.Week <= 14) &&
+      (r.Counts === undefined || r.Counts === "" || r.Counts === "Yes"));
+    const weeks = {}, room = {};
+    rows.forEach((r) => {
+      if (!r.Manager) return;
+      (weeks[r.Manager] = weeks[r.Manager] || new Set()).add(r.Week);
+      if (r.Started !== "Yes" || posOf[r.Player] !== pos || !isNum(r.Points)) return;
+      const o = (room[r.Manager] = room[r.Manager] || { m: r.Manager, tot: 0, players: {} });
+      o.tot += num(r.Points);
+      o.players[r.Player] = (o.players[r.Player] || 0) + num(r.Points);
+    });
+    return Object.keys(weeks).map((m) => {
+      const o = room[m] || { m: m, tot: 0, players: {} };
+      const top = Object.keys(o.players).sort((a, b) => o.players[b] - o.players[a])[0] || "";
+      return { m: m, tot: o.tot, wk: weeks[m].size, ppw: weeks[m].size ? o.tot / weeks[m].size : 0, top: top, topPts: top ? o.players[top] : 0,
+        used: Object.keys(o.players).length };
+    }).sort((a, b) => b.ppw - a.ppw).map((o, i) => Object.assign(o, { rank: i + 1 }));
+  }
+
+  // "WR4 (2025)" style finishes for one player across seasons
+  function playerFinishes(d, name) {
+    const pos = posLookup(d)[name];
+    if (!pos || !RANK_POS.includes(pos)) return [];
+    const yrs = uniq(d.rosters.filter((r) => r.Player === name).map((r) => r.Year)).sort((a, b) => b - a);
+    return yrs.map((y) => {
+      const R = positionRanks(d, y, pos, "reg");
+      const o = R.list.find((x) => x.name === name);
+      return o ? { y: y, pos: pos, rank: o.rank, ppg: o.ppg, tier: TIER_NAMES[o.tier] } : null;
+    }).filter(Boolean);
+  }
+
+  function pageRanks(yArg, posArg, scopeArg) {
+    return loadMany(["rosters", "positions"]).then((d) => {
+      const yrs = uniq(d.rosters.map((r) => r.Year).filter(isNum)).sort((a, b) => b - a);
+      const yr = yrs.includes(yArg) ? yArg : yrs[0];
+      const pos = RANK_POS.includes(String(posArg || "").toUpperCase()) ? String(posArg).toUpperCase() : "QB";
+      const scope = scopeArg === "all" ? "all" : "reg";
+      const R = positionRanks(d, yr, pos, scope);
+      const base = (y, p, sc) => "ranks/" + enc(y) + "/" + p + "/" + sc;
+      const head = '<div class="hero"><span class="kicker">Position rankings</span><h1>' + esc(yr) + " " + esc(pos) + "s</h1></div>" +
+        '<div class="chips"><a class="chip" href="#/players">All players</a><a class="chip on" aria-current="page" href="#/' + base(yr, pos, scope) + '">Rankings</a></div>' +
+        chips(yrs, yr, (y) => base(y, pos, scope)) +
+        chips(RANK_POS, pos, (p) => base(yr, p, scope)) +
+        '<div class="chips"><a class="chip' + (scope === "reg" ? " on" : "") + '" href="#/' + base(yr, pos, "reg") + '">Weeks 1–14</a>' +
+        '<a class="chip' + (scope === "all" ? " on" : "") + '" href="#/' + base(yr, pos, "all") + '">Include playoffs</a></div>';
+      if (!R.list.length) return head + '<div class="state">No ' + esc(pos) + " data for " + esc(yr) + ".</div>";
+
+      const thead = '<thead><tr><th scope="col" class="num">#</th><th scope="col">Player</th><th scope="col">Rostered by</th>' +
+        '<th scope="col" class="num">PPG</th><th scope="col" class="num">Total</th><th scope="col" class="num">Games</th>' +
+        '<th scope="col" class="num">Top 3 wks</th><th scope="col" class="num">Top ' + R.N + ' wks</th><th scope="col" class="num">Pts over repl.</th>' +
+        '<th scope="col" class="num">Started</th></tr></thead>';
+      let lastTier = -1;
+      const body = R.list.map((o) => {
+        const div = o.tier !== lastTier ? '<tr class="tier-row"><td colspan="10">' + esc(TIER_NAMES[o.tier]) + "</td></tr>" : "";
+        lastTier = o.tier;
+        return div + '<tr><td class="num rk">' + o.rank + '</td><td class="name">' + plink(o.name) + "</td><td>" +
+          o.mgrs.slice(0, 2).map((m) => link("career/" + enc(m), m)).join(" → ") + (o.mgrs.length > 2 ? ' <span class="muted">+' + (o.mgrs.length - 2) + "</span>" : "") + '</td><td class="num rec-val">' + o.ppg.toFixed(2) +
+          '</td><td class="num">' + o.tot.toFixed(1) + '</td><td class="num">' + o.gp + '</td><td class="num">' + o.top3 +
+          '</td><td class="num">' + o.topN + '</td><td class="num"><span class="' + (o.por > 0 ? "pos" : o.por < 0 ? "neg" : "") + '">' + signed(o.por, 1) +
+          '</span></td><td class="num">' + pct(o.startPct, 0) + "</td></tr>";
+      }).join("");
+      const rankTable = section("Rankings", '<div class="scroll"><table class="ranks">' + thead + "<tbody>" + body + "</tbody></table></div>" +
+        '<p class="note">Ranked by points per game while on a league roster (players need ' + R.minGames + "+ games; " + R.unq + " didn't qualify). " +
+        "Top " + R.N + " wks = weeks he finished as a starter-level " + esc(pos) + " among rostered players. Pts over repl. = points above a " +
+        R.replPpg.toFixed(1) + "-PPG replacement " + esc(pos) + ". Started = how often his manager played him.</p>",
+        (scope === "reg" ? "Weeks 1–14" : "All weeks") + " · " + R.weeks + " weeks");
+
+      const rooms = positionRooms(d, yr, pos, scope);
+      const roomTable = section(pos + " rooms", table("rooms-" + yr + pos + scope, [
+        { key: "rank", label: "#", num: true, render: (r) => r.rank },
+        { key: "m", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.m), r.m) },
+        { key: "ppw", label: "Pts / week", num: true, render: (r) => r.ppw.toFixed(2) },
+        { key: "tot", label: "Total", num: true, render: (r) => r.tot.toFixed(1) },
+        { key: "used", label: "Players used", num: true },
+        { key: "top", label: "Top contributor", sortVal: (r) => r.top, render: (r) => (r.top ? plink(r.top) + ' <span class="muted">' + r.topPts.toFixed(1) + "</span>" : "—") },
+      ], rooms, { sortKey: "ppw" }), "Starters only · flex counts at real position");
+      return head + rankTable + roomTable;
+    });
+  }
+
   function pagePlayers() {
     return loadMany(["rosters", "positions"]).then((d) => {
       const list = playerIndex(d.rosters, d.positions).sort((a, b) => b.tot - a.tot);
       return '<div class="hero"><span class="kicker">NFL players</span><h1>Players</h1></div>' +
+        '<div class="chips"><a class="chip on" aria-current="page" href="#/players">All players</a><a class="chip" href="#/ranks">Rankings</a></div>' +
         '<label class="search"><span>Search</span><input id="player-search" type="search" placeholder="Type a player or position (e.g. RB)" autocomplete="off"></label>' +
         '<p class="note">Every player who’s been on a roster in the league, by total points scored while rostered.</p>' +
         '<div class="scroll"><table class="plist"><thead><tr><th scope="col">Player</th><th scope="col">Pos</th><th scope="col" class="num">Seasons</th><th scope="col" class="num">Games</th><th scope="col" class="num">Total Pts</th></tr></thead><tbody>' +
@@ -1282,6 +1441,10 @@
         tile("Seasons", yrs.length) +
         tile("Managers", mgrs.length) +
         tile("Best Game", bestRow ? boxLink(bestRow, num(bestRow.Points).toFixed(2)) : "—") + "</div>");
+
+      const fin = playerFinishes(d, name);
+      if (fin.length) html.push('<p class="note finishes">' + fin.map((f) =>
+        link("ranks/" + enc(f.y) + "/" + f.pos + "/reg", "Finished " + f.pos + f.rank + " in " + f.y) + ' <span class="muted">(' + f.ppg.toFixed(1) + " PPG · " + esc(f.tier) + ")</span>").join(" · ") + "</p>");
 
       const byYear = yrs.map((y) => {
         const g = rs.filter((r) => r.Year === y), gp = g.filter((r) => isNum(r.Points));
@@ -1680,7 +1843,8 @@
     const parts = (location.hash.replace(/^#\/?/, "") || "").split("/").map(decodeURIComponent);
     const name = parts[0] || "home";
     document.querySelectorAll(".nav a").forEach((a) => {
-      const on = a.dataset.route === name;
+      const navOf = { player: "players", ranks: "players", game: "games", card: "cards" };
+      const on = a.dataset.route === (navOf[name] || name);
       a.classList.toggle("active", on);
       if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
     });
@@ -1693,6 +1857,7 @@
     else if (name === "records") p = pageRecords();
     else if (name === "trades") p = pageTrades(parts[1]);
     else if (name === "players") p = pagePlayers();
+    else if (name === "ranks") p = pageRanks(parts[1], parts[2], parts[3]);
     else if (name === "odds") p = pageOdds();
     else if (name === "cards") p = pageCards(parts[1]);
     else if (name === "card") p = pageCard(parts[1], parts[2]);

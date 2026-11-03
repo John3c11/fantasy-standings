@@ -357,3 +357,8 @@ table.toilet tr.tb-loser { background: rgba(122, 31, 31, 0.55); }
   .tb-tag { font-size: 10px; padding: 1px 5px; }
 }
 .bk-why { font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; margin-top: 2px; }
+
+/* ---------- position rankings ---------- */
+table.ranks tr.tier-row td { background: var(--endzone); color: var(--chalk); font-size: 13px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; padding-top: 6px; padding-bottom: 6px; }
+table.ranks td.rk { font-family: var(--mono); color: var(--amber); }
+p.finishes { margin-top: -6px; }
