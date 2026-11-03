@@ -10,9 +10,24 @@
 
   const cache = {};
 
+  // The plain CSV export keeps every cell as typed. The gviz endpoint is the fallback, but it
+  // blanks out text in a mostly-number column (that's how "Round 1" in Week went missing).
+  function exportUrl(gid) {
+    return "https://docs.google.com/spreadsheets/d/" + CFG.sheetId + "/export?format=csv&gid=" + gid;
+  }
   function sheetUrl(gid) {
     return "https://docs.google.com/spreadsheets/d/" + CFG.sheetId +
       "/gviz/tq?tqx=out:csv&headers=1&gid=" + gid;
+  }
+  function fetchCsv(gid) {
+    const get = (url) => fetch(url).then((r) => {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.text();
+    }).then((t) => {
+      if (/^\s*<(!doctype|html)/i.test(t)) throw new Error("Got a web page instead of CSV");
+      return t;
+    });
+    return get(exportUrl(gid)).catch(() => get(sheetUrl(gid)));
   }
 
   function parseCSV(text) {
@@ -54,11 +69,7 @@
 
   function load(tab) {
     if (!cache[tab]) {
-      cache[tab] = fetch(sheetUrl(CFG.tabs[tab]))
-        .then((r) => {
-          if (!r.ok) throw new Error("HTTP " + r.status);
-          return r.text();
-        })
+      cache[tab] = fetchCsv(CFG.tabs[tab])
         .then((t) => toObjects(parseCSV(t)))
         .then((rows) => (tab === "games" ? tidyNames(rows, ["Player 1", "Player 2", "Winner"]) : rows));
     }
