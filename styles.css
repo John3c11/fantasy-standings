@@ -334,3 +334,25 @@ a.bk-match:hover { border-color: var(--amber); color: var(--chalk); }
   .bk-slots.join::before, .bk-slots.join::after, .bk-col:not(.last) .bk-slot > .bk-match::after { display: none; }
 }
 .chip.bracket-chip { border-color: var(--amber); }
+
+/* ---------- toilet bowl ---------- */
+table.toilet { border: 3px solid #8A5A44; background: rgba(60, 30, 20, 0.45); }
+table.toilet thead th { color: #E3A98C; }
+table.toilet td.tb-team { font-weight: 700; font-size: 20px; text-transform: uppercase; letter-spacing: 0.04em; }
+table.toilet td.tb-team a { color: var(--chalk); }
+table.toilet td.tb-g, table.toilet td.tb-wins { text-align: right; font-family: var(--mono); font-size: 22px; }
+table.toilet td.tb-g a { color: var(--chalk-dim); text-decoration: none; }
+table.toilet td.tb-g a:hover { color: var(--amber); text-decoration: underline; }
+table.toilet td.tb-g.won a { color: var(--amber); }
+table.toilet td.tb-wins { color: var(--chalk); font-size: 26px; }
+table.toilet tr.tb-loser { background: rgba(122, 31, 31, 0.55); }
+.tb-tag { background: var(--endzone); border: 2px solid #E3A98C; color: var(--chalk); font-size: 12px; letter-spacing: 0.14em; padding: 2px 8px; }
+.tb-who { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+@media (max-width: 700px) {
+  table.toilet td.tb-team { font-size: 16px; }
+  table.toilet td.tb-g { font-size: 16px; }
+  table.toilet td.tb-wins { font-size: 20px; }
+  table.toilet th, table.toilet td { padding-left: 6px; padding-right: 6px; }
+  table.toilet td.tb-team .bk-seed { display: none; }
+  .tb-tag { font-size: 10px; padding: 1px 5px; }
+}

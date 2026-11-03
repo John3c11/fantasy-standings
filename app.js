@@ -496,16 +496,43 @@
 
     // everything else: 3rd place, 5th place, toilet bowl
     const used = new Set([r1Top, r1Bot, semiTop, semiBot, final].filter((g) => g.played).map((g) => g.Week + "|" + g["Player 1"] + "|" + g["Player 2"]));
-    const rest = post.filter((g) => !used.has(g.Week + "|" + g["Player 1"] + "|" + g["Player 2"]))
-      .sort((a, b) => {
-        const k = (w) => (/3rd/i.test(w) ? 0 : /5th/i.test(w) ? 1 : 2) * 100 + rosterWeek(w);
-        return k(a.Week) - k(b.Week);
-      });
-    const consolation = rest.length
-      ? '<div class="bk-sub"><h3>Consolation games</h3><div class="scores">' + rest.map((g) => scoreCard(g, g.Week)).join("") + "</div></div>"
+    const rest = post.filter((g) => !used.has(g.Week + "|" + g["Player 1"] + "|" + g["Player 2"]));
+    const placement = rest.filter((g) => /3rd|5th/i.test(g.Week)).sort((a, b) => (/3rd/i.test(a.Week) ? 0 : 1) - (/3rd/i.test(b.Week) ? 0 : 1));
+    const toilet = rest.filter((g) => /toilet/i.test(g.Week)).sort((a, b) => rosterWeek(a.Week) - rosterWeek(b.Week));
+    const placementHtml = placement.length
+      ? '<div class="bk-sub"><h3>Placement games</h3><div class="scores">' + placement.map((g) => scoreCard(g, g.Week)).join("") + "</div></div>"
       : "";
-    return section(projected ? "Playoff picture" : "Playoffs", bracket + consolation,
-      projected ? "If the season ended today" : "Top 6 make it · top 2 get a bye");
+    return section(projected ? "Playoff picture" : "Playoffs", bracket + placementHtml,
+      projected ? "If the season ended today" : "Top 6 make it · top 2 get a bye") +
+      toiletBowl(toilet, seeds, seedOf, projected);
+  }
+
+  // Bottom two, best of three. Loser of the series finishes last.
+  function toiletBowl(games, seeds, seedOf, projected) {
+    const pair = games.length ? [games[0]["Player 1"], games[0]["Player 2"]] : seeds.slice(-2);
+    if (pair.length < 2 || (!games.length && !projected)) return "";
+    pair.sort((a, b) => (seedOf[a] || 99) - (seedOf[b] || 99));
+    const wins = { [pair[0]]: 0, [pair[1]]: 0 };
+    const cols = [0, 1, 2].map((i) => {
+      const g = games[i];
+      if (!g) return null;
+      const pts = (m) => num(g["Player 1"] === m ? g["P1 Points"] : g["P2 Points"]);
+      const w = pts(pair[0]) >= pts(pair[1]) ? pair[0] : pair[1];
+      wins[w]++;
+      return { g: g, pts: pts, w: w };
+    });
+    const decided = wins[pair[0]] >= 2 || wins[pair[1]] >= 2;
+    const loser = decided ? (wins[pair[0]] < wins[pair[1]] ? pair[0] : pair[1]) : "";
+    const cell = (c, m) => !c ? '<td class="tb-g muted">—</td>'
+      : '<td class="tb-g' + (c.w === m ? " won" : "") + '"><a href="#/game/' + gameRoute(c.g.Year, c.g.Week, c.g["Player 1"], c.g["Player 2"]) + '">' + c.pts(m).toFixed(2) + "</a></td>";
+    const row = (m) => '<tr class="' + (m === loser ? "tb-loser" : "") + '"><td class="tb-team"><span class="tb-who"><span class="bk-seed">' + (seedOf[m] || "") + "</span>" +
+      link("career/" + enc(m), m) + (m === loser ? '<span class="tb-tag">Last place</span>' : "") + "</span></td>" +
+      cols.map((c) => cell(c, m)).join("") + '<td class="tb-wins">' + wins[m] + "</td></tr>";
+    return section("Toilet Bowl", '<div class="scroll"><table class="toilet"><thead><tr><th scope="col">Team</th>' +
+      '<th scope="col" class="num">G1</th><th scope="col" class="num">G2</th><th scope="col" class="num">G3</th><th scope="col" class="num">W</th></tr></thead><tbody>' +
+      row(pair[0]) + row(pair[1]) + "</tbody></table></div>" +
+      '<p class="note">' + (loser ? esc(loser) + " lost the series and finished last." : projected ? "If the season ended today, these two would play it." : "Series in progress. First to two wins stays out of last place.") + "</p>",
+      "Bottom 2 · best of 3 · loser finishes last");
   }
 
   function projectionSummary(rows, filter, groupKey) {
@@ -1509,8 +1536,10 @@
       const yrs = uniq(played.map((g) => g.Year)).sort((a, b) => b - a);
       const yr = yrs.includes(yArg) ? yArg : yrs[0];
       const inYear = played.filter((g) => g.Year === yr);
-      const weeks = uniq(inYear.map((g) => g.Week)).sort((a, b) => weekSortKey(a) - weekSortKey(b));
-      const showBracket = wArg === "bracket";
+      const weeks = uniq(inYear.map((g) => g.Week).filter(isRegularWeek)).sort((a, b) => a - b);
+      const postStarted = inYear.some((g) => !isRegularWeek(g.Week));
+      // playoff weeks live in the bracket; open it by default once the playoffs have started
+      const showBracket = wArg ? !isRegularWeek(wArg) : postStarted;
       const wk = showBracket ? "bracket" : weeks.includes(wArg) ? wArg : weeks[weeks.length - 1];
       const games = inYear.filter((g) => g.Week === wk);
       const label = (w) => (isRegularWeek(w) ? "Wk " + w : w);
@@ -1519,7 +1548,7 @@
       const head = '<div class="hero"><span class="kicker">Game log</span><h1>' + esc(yr) + " · " +
         esc(showBracket ? "Playoff bracket" : isRegularWeek(wk) ? "Week " + wk : wk) + "</h1></div>" +
         chips(yrs, yr, (y) => "games/" + y) +
-        '<div class="chips weeks">' + chip("bracket", "Bracket") + weeks.map((w) => chip(w, label(w))).join("") + "</div>";
+        '<div class="chips weeks">' + weeks.map((w) => chip(w, label(w))).join("") + chip("bracket", "Bracket") + "</div>";
       if (showBracket) return head + (playoffBracket(d.games, yr) || '<div class="state">Not enough games yet to draw a bracket.</div>');
       return head +
         '<p class="note">Tap a game for both lineups.</p>' +
@@ -1574,7 +1603,7 @@
       const wkLabel = isRegularWeek(w) ? "Week " + w : w;
       return '<div class="hero"><span class="kicker">' + esc(y) + " · " + esc(wkLabel) + '</span><h1>' + esc(p1) + " vs " + esc(p2) + "</h1></div>" +
         '<div class="box-grid">' + side(p1, s1, s1 > s2) + side(p2, s2, s2 > s1) + "</div>" +
-        '<p class="note">Highlighted bench score = the best player left on the bench. ' + link("games/" + enc(y) + "/" + enc(w), "← All " + wkLabel + " games") +
+        '<p class="note">Highlighted bench score = the best player left on the bench. ' + (isRegularWeek(w) ? link("games/" + enc(y) + "/" + enc(w), "← All " + wkLabel + " games") : link("games/" + enc(y) + "/bracket", "← " + y + " bracket")) +
         " · " + link("rivalries/" + enc(p1) + "/" + enc(p2), "Full rivalry") + "</p>";
     });
   }
