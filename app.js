@@ -94,11 +94,61 @@
   }
 
   function loadMany(names) {
-    return Promise.all(names.map(load)).then((arr) => {
+    // MVPs are rebuilt from Moves so a team defense can never be a team's MVP.
+    const want = names.includes("mvps") && !names.includes("moves") ? names.concat(["moves"]) : names;
+    return Promise.all(want.map(load)).then((arr) => {
       const o = {};
-      names.forEach((n, i) => (o[n] = arr[i]));
+      want.forEach((n, i) => (o[n] = arr[i]));
+      if (o.mvps && o.moves) o.mvps = playerMvps(o.mvps, o.moves);
       return o;
     });
+  }
+
+  /* ---------- team defenses ---------- */
+  const isDefPos = (p) => /^(DEF|D\/ST|DST|D)$/i.test(String(p || "").trim());
+
+  // Each team's MVP for a season = most started points by one non-defense player (all stints added up).
+  const mvpCache = new WeakMap();
+  // Defense names: anything that sat in a DEF slot, has no Yahoo player ID, or is listed as DEF in Positions.
+  function defenseNames(rosters, positions) {
+    const set = new Set();
+    rosters.forEach((r) => { if (r.Player && r.Player !== "(Empty)" && (isDefPos(r.Slot) || !r["Player ID"])) set.add(r.Player); });
+    (positions || []).forEach((r) => { if (r.Player && isDefPos(r["Final Pos"] || r["Derived Pos"])) set.add(r.Player); });
+    return set;
+  }
+
+  function playerMvps(sheetMvps, moves) {
+    if (mvpCache.has(moves)) return mvpCache.get(moves);
+    const team = {}, per = {};
+    moves.forEach((r) => {
+      if (!r.Year || !r.Manager || !r.Player) return;
+      const pts = num(r["Started Pts"]) || 0;
+      const tk = r.Year + "|" + r.Manager;
+      team[tk] = (team[tk] || 0) + pts;
+      if (isDefPos(r.Pos)) return;
+      const pk = tk + "|" + r.Player;
+      const o = (per[pk] = per[pk] || { Year: r.Year, Manager: r.Manager, MVP: r.Player, Pos: r.Pos, Acquired: r["How Acquired"], pts: 0, first: 99 });
+      o.pts += pts;
+      const fw = num(r["First Week"]);
+      if (fw < o.first) { o.first = fw; o.Acquired = r["How Acquired"]; }
+    });
+    const best = {};
+    Object.values(per).forEach((o) => {
+      const tk = o.Year + "|" + o.Manager;
+      if (!best[tk] || o.pts > best[tk].pts) best[tk] = o;
+    });
+    const out = Object.keys(best).filter((k) => best[k].pts > 0).map((k) => {
+      const o = best[k];
+      return { Year: o.Year, Manager: o.Manager, MVP: o.MVP, Pos: o.Pos, Acquired: o.Acquired,
+        "Started Pts": o.pts.toFixed(2), "Share of Team Pts": team[k] ? (o.pts / team[k] * 100).toFixed(0) + "%" : "" };
+    });
+    // keep any sheet MVP row Moves can't rebuild, unless it's a defense
+    sheetMvps.forEach((r) => {
+      if (!best[r.Year + "|" + r.Manager] && !isDefPos(r.Pos)) out.push(r);
+    });
+    out.columns = sheetMvps.columns;
+    mvpCache.set(moves, out);
+    return out;
   }
 
   /* ============================== helpers ============================== */
@@ -1021,14 +1071,15 @@
           link("trades/" + t.y, t.y + " · Wk " + t.w));
       }
       const mvRec = (label, how) => {
-        const h = best(mv.filter((r) => r["How Acquired"] === how), (r) => num(r.Value), false);
+        const h = best(mv.filter((r) => r["How Acquired"] === how && !isDefPos(r.Pos)), (r) => num(r.Value), false);
         if (h) add("Transactions", label, h, signed(h.v) + " value", h.r.Manager,
           plink(h.r.Player) + " (" + esc(h.r.Pos || "") + "): " + esc(h.r.Starts) + " starts, " + fmt(h.r["Started Pts"], 1) + " pts", link("trades/" + h.r.Year, h.r.Year + " season"));
       };
       mvRec("Best waiver pickup", "Waiver");
       mvRec("Best draft value", "Draft");
       const owners = {};
-      d.rosters.forEach((r) => { if (r.Player && r.Player !== "(Empty)") (owners[r.Player] = owners[r.Player] || new Set()).add(r.Manager); });
+      const defs = defenseNames(d.rosters, d.positions);
+      d.rosters.forEach((r) => { if (r.Player && r.Player !== "(Empty)" && !defs.has(r.Player)) (owners[r.Player] = owners[r.Player] || new Set()).add(r.Manager); });
       const jm = best(Object.keys(owners).map((p) => ({ p: p, n: owners[p].size })), (o) => o.n, false);
       if (jm) add("Transactions", "Journeyman", jm, jm.v + " managers", "", plink(jm.r.p) + " has been on " + Array.from(owners[jm.r.p]).map(esc).join(", "), "");
       const carry = best(d.mvps, (r) => num(r["Share of Team Pts"]), false);
@@ -1137,7 +1188,7 @@
           wval: wv.reduce((s, r) => s + val(r), 0), dval: dr.reduce((s, r) => s + val(r), 0) };
       });
 
-      const topList = (how, n) => inYr.filter((r) => r["How Acquired"] === how).sort((a, b) => val(b) - val(a)).slice(0, n);
+      const topList = (how, n) => inYr.filter((r) => r["How Acquired"] === how && !isDefPos(r.Pos)).sort((a, b) => val(b) - val(a)).slice(0, n);
       const moveCols = [
         { key: "Player", label: "Player", cls: "name", render: (r) => plink(r.Player) },
         { key: "Pos", label: "Pos" },
