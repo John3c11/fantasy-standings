@@ -833,6 +833,8 @@
         tile("Avg Finish", esc(at["Avg Finish"] || "—")) +
         tile("Pts / Game", fmt(at["Pts/Game"])) +
         tile("Career High", fmt(at["Career High"])) + "</div>");
+      html.push('<p class="note">' + years(d.standings).filter((y) => d.standings.some((r) => r.Year === y && r.Player === p)).map((y) =>
+        link("wrapped/" + y + "/" + enc(p), "▶ " + y + " Wrapped")).join(" &nbsp; ") + "</p>");
       html.push('<div class="grid-2 even">' + section("Trophy case", trophyCase(d, p)) + section("Playing style", playingStyle(d, p), "Compared with the rest of the league") + "</div>");
       html.push(section("Best-ever lineup", '<div class="grid-2 even"><div><h3 class="sub-h">Best seasons</h3>' + lineupTable(fillLineup(seasonCands(d, p)), "season", false) +
         '</div><div><h3 class="sub-h">Best single weeks</h3>' + lineupTable(fillLineup(weekCands(d, p)), "week", false) + "</div></div>",
@@ -2276,6 +2278,166 @@
     });
   }
 
+  /* ============================== season wrapped ============================== */
+
+  const WR_TABS = ["games", "standings", "moves", "lineups", "elo", "mvps", "rosters", "positions"];
+
+  function pageWrapped(yArg, mArg) {
+    return loadMany(WR_TABS).then((d) => {
+      const yrs = years(d.standings);
+      const yr = yrs.includes(yArg) ? yArg : yrs[0];
+      const st = d.standings.filter((r) => r.Year === yr && r.Player);
+      const ms = st.map((r) => r.Player).sort();
+      if (!ms.includes(mArg)) {
+        return '<div class="hero"><span class="kicker">' + esc(yr) + ' season</span><h1>Season Wrapped</h1></div>' +
+          filterBar([{ label: "Season", items: yrs.map((y) => ["wrapped/" + y, y]), current: "wrapped/" + yr }]) +
+          '<p class="note">Pick a manager for their ' + esc(yr) + " season, one slide at a time." + (isNum((st[0] || {}).Place) ? "" : " This season isn’t over, so it’s the story so far.") + "</p>" +
+          '<div class="wr-pick">' + ms.map((m) => '<a class="wr-pick-btn" href="#/wrapped/' + enc(yr) + "/" + enc(m) + '"><span>' + esc(m) + "</span><small>" +
+            esc((st.find((r) => r.Player === m) || {}).Record || "") + "</small></a>").join("") + "</div>";
+      }
+      const m = mArg, me = st.find((r) => r.Player === m);
+      const done = isNum(me.Place);
+      const games = playedGames(d.games).filter((g) => g.Year === yr && (g["Player 1"] === m || g["Player 2"] === m));
+      const mine = games.map((g) => {
+        const a = g["Player 1"] === m, s1 = num(a ? g["P1 Points"] : g["P2 Points"]), s2 = num(a ? g["P2 Points"] : g["P1 Points"]), w = gameWinner(g);
+        return { g: g, opp: a ? g["Player 2"] : g["Player 1"], s: s1, o: s2, res: !w ? "T" : w === m ? "W" : "L" };
+      });
+      const wkTxt = (g) => (isRegularWeek(g.Week) ? "Week " + g.Week : g.Week);
+      const allYr = playedGames(d.games).filter((g) => g.Year === yr);
+      const allScores = allYr.flatMap((g) => [num(g["P1 Points"]), num(g["P2 Points"])]).sort((a, b) => b - a);
+      const slides = [];
+      const slide = (cls, kicker, big, body) => slides.push('<section class="wr-slide ' + cls + '"><div class="wr-k">' + kicker + '</div><div class="wr-big">' + big + '</div><div class="wr-body">' + body + "</div></section>");
+      const ord = (n) => n + (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
+      const share = [];
+
+      // 1 intro
+      slide("s-turf", esc(yr) + " Season Wrapped", esc(m), "<p>" + (done ? "Final record " + esc(me.Record) + ". Finished " + ord(num(me.Place)) + "." : "Record so far: " + esc(me.Record) + ".") +
+        "</p><p class=\"wr-hint\">Tap or use the arrow keys →</p>");
+      share.push(m + "’s " + yr + " Wrapped (" + me.Record + (done ? ", " + ord(num(me.Place)) : "") + ")");
+
+      // 2 scoring
+      const pfRank = st.slice().sort((a, b) => num(b["Points For"]) - num(a["Points For"])).findIndex((r) => r.Player === m) + 1;
+      slide("s-dark", "You scored", fmt(me["Points For"], 1), "<p>That’s " + fmt(me["Avg Points"], 1) + " a week, " + ord(pfRank) + " in the league.</p>" +
+        (pfRank === 1 ? "<p>Nobody put up more.</p>" : pfRank === st.length ? "<p>Nobody put up less. Rough.</p>" : ""));
+      share.push("📊 " + fmt(me["Points For"], 1) + " points (" + ord(pfRank) + ")");
+
+      // 3 best week / 4 worst week
+      const best = mine.slice().sort((a, b) => b.s - a.s)[0], worst = mine.slice().sort((a, b) => a.s - b.s)[0];
+      if (best) {
+        const rk = allScores.indexOf(best.s) + 1;
+        slide("s-amber", "Your best week", best.s.toFixed(2), "<p>" + esc(wkTxt(best.g)) + " against " + esc(best.opp) + " (" + (best.res === "W" ? "won" : best.res === "L" ? "lost, somehow" : "tied") + " " +
+          best.s.toFixed(2) + "–" + best.o.toFixed(2) + ").</p><p>" + (rk === 1 ? "The highest score in the league all season." : "The " + ord(rk) + "-best score in the league all season.") + "</p>");
+        share.push("🔥 Best week: " + best.s.toFixed(2) + " (" + wkTxt(best.g) + ")");
+      }
+      if (worst && worst !== best) {
+        slide("s-endzone", "Your worst week", worst.s.toFixed(2), "<p>" + esc(wkTxt(worst.g)) + " against " + esc(worst.opp) + ". " +
+          (worst.res === "W" ? "You still won. Lucky." : "You lost " + worst.o.toFixed(2) + "–" + worst.s.toFixed(2) + ".") + "</p>");
+      }
+
+      // 5 MVP
+      const mvp = d.mvps.find((r) => r.Year === yr && r.Manager === m);
+      if (mvp) {
+        slide("s-turf", "Your MVP", esc(mvp.MVP), "<p>" + esc(mvp.Pos || "") + " · " + fmt(mvp["Started Pts"], 1) + " points in your lineup" +
+          (isNum(mvp["Share of Team Pts"]) ? ", " + pct(num(mvp["Share of Team Pts"]), 0) + " of everything you scored" : "") + ".</p>" +
+          (mvp.Acquired ? "<p>" + (mvp.Acquired === "Draft" ? "You drafted him." : mvp.Acquired === "Waiver" ? "A waiver pickup!" : "Got him in a trade.") + "</p>" : ""));
+        share.push("⭐ MVP: " + mvp.MVP);
+      }
+
+      // 6 best move
+      const mv = d.moves.filter((r) => r.Year === yr && r.Manager === m && !isDefPos(r.Pos));
+      const bestMove = mv.slice().sort((a, b) => (num(b.Value) || 0) - (num(a.Value) || 0))[0];
+      if (bestMove && num(bestMove.Value) > 0) {
+        const how = bestMove["How Acquired"];
+        slide("s-dark", "Your best move", esc(bestMove.Player), "<p>" + (how === "Waiver" ? "Picked him up in week " + esc(bestMove["First Week"]) : how === "Trade" ? "Traded for him with " + esc(bestMove.From) : "Drafted him") +
+          ". He gave you " + signed(num(bestMove.Value), 1) + " points over a bench-level " + esc(bestMove.Pos || "player") + ".</p>");
+        share.push("💡 Best move: " + bestMove.Player + " (" + signed(num(bestMove.Value), 1) + ")");
+      }
+
+      // 7 worst lineup decision
+      const lu = d.lineups.filter((r) => r.Year === yr && r.Manager === m && isNum(r["Bench Left"])).sort((a, b) => num(b["Bench Left"]) - num(a["Bench Left"]))[0];
+      if (lu && num(lu["Bench Left"]) > 0) {
+        const benchBest = d.rosters.filter((r) => r.Year === yr && r.Week === lu.Week && r.Manager === m && r.Started !== "Yes" && r.Slot !== "IR" && isNum(r.Points))
+          .sort((a, b) => num(b.Points) - num(a.Points))[0];
+        const lost = num(lu["Self-Inflicted Loss"]) === 1;
+        slide("s-endzone", "Your worst lineup call", fmt(lu["Bench Left"]) + " pts", "<p>Left on your bench in week " + esc(lu.Week) +
+          (benchBest ? ", including " + esc(benchBest.Player) + " (" + fmt(benchBest.Points) + ")" : "") + ".</p>" + (lost ? "<p>The right lineup would have won that game.</p>" : ""));
+        share.push("🪑 Worst call: " + fmt(lu["Bench Left"]) + " left on the bench" + (lost ? " (cost a win)" : ""));
+      }
+
+      // 8 rivals
+      const vs = {};
+      mine.forEach((x) => { const o = (vs[x.opp] = vs[x.opp] || { w: 0, l: 0 }); if (x.res === "W") o.w++; else if (x.res === "L") o.l++; });
+      const opps = Object.keys(vs);
+      if (opps.length) {
+        const nem = opps.slice().sort((a, b) => (vs[b].l - vs[b].w) - (vs[a].l - vs[a].w))[0];
+        const fav = opps.slice().sort((a, b) => (vs[b].w - vs[b].l) - (vs[a].w - vs[a].l))[0];
+        slide("s-dark", "Your rivals", esc(nem), "<p>Your nemesis: " + vs[nem].w + "-" + vs[nem].l + " against " + esc(nem) + ".</p>" +
+          (fav !== nem ? "<p>Your favorite victim: " + esc(fav) + " (" + vs[fav].w + "-" + vs[fav].l + ").</p>" : ""));
+        share.push("😤 Nemesis: " + nem + " (" + vs[nem].w + "-" + vs[nem].l + ")");
+      }
+
+      // 9 luck
+      if (isNum(me.Luck)) {
+        const L = num(me.Luck);
+        slide(L >= 0 ? "s-amber" : "s-endzone", "Luck", signed(L, 1), "<p>" + (L >= 1.5 ? "You won about " + L.toFixed(1) + " more games than your scores deserved. The schedule loved you." :
+          L <= -1.5 ? "You won about " + (-L).toFixed(1) + " fewer games than your scores deserved. The schedule hated you." : "Your record was about what your scores deserved.") + "</p>");
+      }
+
+      // 10 card
+      const card = cardsForYear(d, yr).find((c) => c.m === m);
+      if (card) {
+        slide("s-card", "Your card", "", '<div class="wr-cardwrap">' + cardHtml(card, false) + "</div>");
+        share.push("🃏 Card: " + card.ovr + " OVR (" + card.tier + ")");
+      }
+
+      // 11 finale
+      const champ = done && num(me.Place) === 1;
+      const lastPlace = done && num(me.Place) === Math.max.apply(null, st.map((r) => num(r.Place)));
+      slide(champ ? "s-amber" : lastPlace ? "s-endzone" : "s-turf", done ? "Final finish" : "Still to play", done ? ord(num(me.Place)) : esc(me.Record),
+        "<p>" + (champ ? "Champion. Enjoy it." : lastPlace ? "Last place. There’s always next year." : done ? "See you next season." : "The story isn’t over yet.") + "</p>" +
+        '<div class="wr-end"><button type="button" class="chip" data-copy-wrapped>Copy my Wrapped</button><a class="chip" href="#/wrapped/' + enc(yr) + '">Pick someone else</a></div>');
+
+      return '<div class="wr" data-i="0"><div class="wr-bars">' + slides.map((_, i) => "<span" + (i === 0 ? ' class="on"' : "") + "></span>").join("") + "</div>" +
+        '<div class="wr-stage" aria-live="polite">' + slides.map((h, i) => h.replace('<section class="wr-slide', '<section' + (i ? " hidden" : "") + ' class="wr-slide')).join("") + "</div>" +
+        '<div class="wr-nav"><button type="button" class="wr-prev" aria-label="Previous slide">←</button><span class="wr-count">1 / ' + slides.length + '</span><button type="button" class="wr-next" aria-label="Next slide">→</button></div></div>' +
+        '<textarea class="sr" id="wrapped-text" aria-hidden="true" tabindex="-1">' + esc(share.join("\n")) + "</textarea>";
+    });
+  }
+
+  function wrGo(delta) {
+    const w = document.querySelector(".wr");
+    if (!w) return;
+    const sl = w.querySelectorAll(".wr-slide"), bars = w.querySelectorAll(".wr-bars span");
+    const i = Math.max(0, Math.min(sl.length - 1, +w.dataset.i + delta));
+    w.dataset.i = i;
+    sl.forEach((x, k) => (x.hidden = k !== i));
+    bars.forEach((b, k) => b.classList.toggle("on", k <= i));
+    w.querySelector(".wr-count").textContent = i + 1 + " / " + sl.length;
+  }
+  document.addEventListener("click", (e) => {
+    if (!document.querySelector(".wr")) return;
+    if (e.target.closest(".wr-next")) return wrGo(1);
+    if (e.target.closest(".wr-prev")) return wrGo(-1);
+    const cp = e.target.closest("[data-copy-wrapped]");
+    if (cp) {
+      const t = document.getElementById("wrapped-text");
+      const ok = () => { cp.textContent = "Copied ✓"; setTimeout(() => (cp.textContent = "Copy my Wrapped"), 2000); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t.value).then(ok, () => { t.select(); document.execCommand("copy"); ok(); });
+      else { t.select(); document.execCommand("copy"); ok(); }
+      return;
+    }
+    const stage = e.target.closest(".wr-stage");
+    if (stage && !e.target.closest("a, button")) {
+      const r = stage.getBoundingClientRect();
+      wrGo(e.clientX < r.left + r.width * 0.3 ? -1 : 1);
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!document.querySelector(".wr") || e.target.closest("input, select, textarea")) return;
+    if (e.key === "ArrowRight") wrGo(1);
+    else if (e.key === "ArrowLeft") wrGo(-1);
+  });
+
   /* ============================== trading cards ============================== */
 
   const CARD_STATS = [
@@ -2537,6 +2699,7 @@
     else if (name === "recap") p = pageRecap(parts[1], parts[2]);
     else if (name === "alltime") p = pageAllTime();
     else if (name === "draft") p = pageDraft(parts[1]);
+    else if (name === "wrapped") p = pageWrapped(parts[1], parts[2]);
     else if (name === "preview") p = pagePreview();
     else if (name === "players") p = pagePlayers();
     else if (name === "ranks") p = pageRanks(parts[1], parts[2], parts[3]);
