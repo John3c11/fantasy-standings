@@ -551,3 +551,41 @@ button.chip { font-family: inherit; cursor: pointer; background: transparent; co
 .rc-link a { font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--chalk-dim); }
 table.recap-st tr.out td { opacity: 0.7; }
 table.recap-st tbody tr:nth-child(6) td { border-bottom: 3px solid var(--amber); }
+
+/* ---------- matchup preview ---------- */
+.pv-list { display: flex; flex-direction: column; gap: 18px; }
+.pv { background: #111311; border: 2px solid var(--line); }
+.pv.big { border: 3px solid var(--amber); }
+.pv-flag { background: var(--amber); color: #111; font-size: 13px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; padding: 4px 14px; }
+.pv-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 0.8fr) minmax(0, 1fr); gap: 16px; padding: 16px; align-items: start; }
+.pv-side.right { text-align: right; }
+.pv-name a { font-size: 28px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; text-decoration: none; }
+.pv-rec { font-family: var(--mono); color: var(--chalk-dim); font-size: 16px; }
+.pv-form { display: flex; gap: 4px; margin: 6px 0 8px; }
+.pv-side.right .pv-form { justify-content: flex-end; }
+.pv-form span { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; color: #111; }
+.pv-form .f-W { background: var(--win); } .pv-form .f-L { background: var(--loss); } .pv-form .f-T { background: var(--chalk-dim); }
+.pv-stats { display: grid; grid-template-columns: repeat(3, auto); gap: 4px 14px; margin: 0; justify-content: start; }
+.pv-side.right .pv-stats { justify-content: end; }
+.pv-stats div { display: flex; flex-direction: column; }
+.pv-stats dt { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber); }
+.pv-stats dd { margin: 0; font-family: var(--mono); font-size: 20px; }
+.pv-stake { margin-top: 8px; font-size: 15px; color: var(--chalk-dim); }
+.pv-stake b { font-family: var(--mono); font-weight: 400; font-size: 17px; }
+.pv-mid { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+.pv-proj { display: flex; justify-content: space-between; align-items: baseline; font-family: var(--mono); font-size: 30px; color: var(--amber); }
+.pv-proj small { font-family: var(--display); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--chalk-dim); }
+.pv-split { height: 14px; background: rgba(245,245,240,0.25); position: relative; }
+.pv-split span { position: absolute; left: 0; top: 0; bottom: 0; background: var(--amber); }
+.pv-pct { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 18px; }
+.pv-pct b { font-weight: 400; }
+.pv-foot { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 10px 16px; border-top: 2px solid var(--line); font-size: 16px; color: var(--chalk-dim); }
+.pv-foot b { color: var(--chalk); font-weight: 700; }
+@media (max-width: 760px) {
+  .pv-top { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .pv-mid { grid-column: 1 / -1; grid-row: 1; padding-top: 0; }
+  .pv-name a { font-size: 22px; }
+  .pv-stats { grid-template-columns: repeat(2, auto); }
+  .pv-stats dd { font-size: 17px; }
+  .pv-stake { font-size: 14px; }
+}

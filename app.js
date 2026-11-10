@@ -419,7 +419,7 @@
           { key: "Record", label: "W-L", num: true, sortVal: (r) => wins(r.Record) * 1000 + num(r["Points For"]) / 10 },
           { key: "Points For", label: "PF", num: true, render: (r) => fmt(r["Points For"]) },
           { key: "Luck", label: "Luck", num: true, render: (r) => signed(r.Luck) },
-        ], st, { sortKey: "Record" }), link("odds", "Playoff odds →") + " &nbsp; " + link("season/" + yr, "Full season →")) +
+        ], st, { sortKey: "Record" }), link("preview", "This week’s matchups →") + " &nbsp; " + link("odds", "Playoff odds →") + " &nbsp; " + link("season/" + yr, "Full season →")) +
         section("Power rankings", eloTableCompact(d.elo), link("rankings", "Elo chart →")) +
         "</div>";
       return html;
@@ -1670,6 +1670,86 @@
     });
   }
 
+  /* ============================== matchup preview ============================== */
+
+  // standard normal CDF (Abramowitz-Stegun)
+  function normCdf(x) {
+    const t = 1 / (1 + 0.2316419 * Math.abs(x));
+    const d = 0.3989423 * Math.exp(-x * x / 2);
+    const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+    return x > 0 ? 1 - p : p;
+  }
+
+  function pagePreview() {
+    return loadMany(["games"]).then((d) => {
+      const m = buildOddsModel(d.games);
+      const head = (k) => '<div class="hero"><span class="kicker">' + esc(k) + '</span><h1>Matchup preview</h1></div>';
+      if (!m.teams.length) return head("Preview") + '<p class="empty">No games yet.</p>';
+      if (!m.nextWeek) return head(m.yr + " season") + '<p class="empty">No upcoming regular-season games in the sheet. Previews show up once next week’s matchups are entered in Games (with the scores left blank).</p>';
+      const wk = m.nextWeek;
+      const games = m.left.filter((g) => +g.Week === wk);
+      const all = playedGames(d.games);
+      const base = simulate(m, ODDS.sims, 20261001);
+
+      // current standings order for seeds
+      const order = m.teams.slice().sort((a, b) => ((m.T[b].w + m.T[b].tie / 2) - (m.T[a].w + m.T[a].tie / 2)) || (m.T[b].pf - m.T[a].pf));
+      const seed = {};
+      order.forEach((t, i) => (seed[t] = i + 1));
+      const yrGames = all.filter((g) => g.Year === m.yr && isRegularWeek(g.Week)).sort((a, b) => +a.Week - +b.Week);
+      const form = (t) => yrGames.filter((g) => g["Player 1"] === t || g["Player 2"] === t).map((g) => {
+        const w = gameWinner(g);
+        return { r: !w ? "T" : w === t ? "W" : "L", s: num(g["Player 1"] === t ? g["P1 Points"] : g["P2 Points"]) };
+      });
+      const ord = (n) => n + (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
+
+      const cards = games.map((g, gi) => {
+        const a = g["Player 1"], b = g["Player 2"], A = m.T[a], B = m.T[b];
+        const pA = normCdf((A.mean - B.mean) / Math.sqrt(A.sd * A.sd + B.sd * B.sd));
+        const ifA = simulate(m, ODDS.stakeSims, 20262001 + gi, { game: g, winner: a });
+        const ifB = simulate(m, ODDS.stakeSims, 20263001 + gi, { game: g, winner: b });
+        const swing = Math.abs(ifA[a].playoff - ifB[a].playoff) + Math.abs(ifB[b].playoff - ifA[b].playoff);
+        // series history (every meeting, playoffs included)
+        const meets = all.filter((x) => (x["Player 1"] === a && x["Player 2"] === b) || (x["Player 1"] === b && x["Player 2"] === a))
+          .sort((x, y) => (x.Year - y.Year) || (weekSortKey(x.Week) - weekSortKey(y.Week)));
+        let aw = 0, bw = 0, tie = 0;
+        meets.forEach((x) => { const w = gameWinner(x); if (!w) tie++; else if (w === a) aw++; else bw++; });
+        const last = meets[meets.length - 1];
+        const lastTxt = last ? (() => {
+          const w = gameWinner(last), sa = num(last["Player 1"] === a ? last["P1 Points"] : last["P2 Points"]), sb = num(last["Player 1"] === a ? last["P2 Points"] : last["P1 Points"]);
+          return '<a href="#/game/' + gameRoute(last.Year, last.Week, last["Player 1"], last["Player 2"]) + '">' + esc(last.Year) + " · " + esc(isRegularWeek(last.Week) ? "Wk " + last.Week : last.Week) + "</a>: " +
+            (w ? esc(w) + " won " + Math.max(sa, sb).toFixed(2) + "–" + Math.min(sa, sb).toFixed(2) : "tied " + sa.toFixed(2));
+        })() : "First meeting";
+        const seriesTxt = !meets.length ? "Never played" : aw === bw ? "Series tied " + aw + "-" + bw + (tie ? "-" + tie : "") :
+          esc(aw > bw ? a : b) + " leads " + Math.max(aw, bw) + "-" + Math.min(aw, bw) + (tie ? "-" + tie : "");
+        const side = (t, T, p, ifW, ifL, align) => {
+          const f = form(t), last5 = f.slice(-5), last3 = f.slice(-3);
+          const l3 = last3.length ? last3.reduce((s2, x) => s2 + x.s, 0) / last3.length : NaN;
+          return '<div class="pv-side ' + align + '"><div class="pv-name">' + link("career/" + enc(t), t) + "</div>" +
+            '<div class="pv-rec">' + T.w + "-" + T.l + (T.tie ? "-" + T.tie : "") + " · " + ord(seed[t]) + "</div>" +
+            '<div class="pv-form" aria-label="Last ' + last5.length + ' results">' + last5.map((x) => '<span class="f-' + x.r + '">' + x.r + "</span>").join("") + "</div>" +
+            '<dl class="pv-stats"><div><dt>Season PPG</dt><dd>' + (T.scores.length ? (T.pf / T.scores.length).toFixed(1) : "—") + "</dd></div>" +
+            "<div><dt>Last 3</dt><dd>" + (isNaN(l3) ? "—" : l3.toFixed(1)) + "</dd></div>" +
+            "<div><dt>Playoff odds</dt><dd>" + oddsPct(base[t].playoff) + "</dd></div></dl>" +
+            '<div class="pv-stake">With a win <b class="pos">' + oddsPct(ifW[t].playoff) + '</b> · with a loss <b class="neg">' + oddsPct(ifL[t].playoff) + "</b></div></div>";
+        };
+        return { swing: swing, html: '<article class="pv">' +
+          '<div class="pv-top">' + side(a, A, pA, ifA, ifB, "left") +
+          '<div class="pv-mid"><div class="pv-proj"><span>' + A.mean.toFixed(1) + '</span><small>proj.</small><span>' + B.mean.toFixed(1) + "</span></div>" +
+            '<div class="pv-split" role="img" aria-label="' + esc(a) + " " + Math.round(pA * 100) + "% to win, " + esc(b) + " " + Math.round((1 - pA) * 100) + '%"><span style="width:' + (pA * 100).toFixed(1) + '%"></span></div>' +
+            '<div class="pv-pct"><b>' + Math.round(pA * 100) + "%</b><b>" + Math.round((1 - pA) * 100) + "%</b></div></div>" +
+          side(b, B, 1 - pA, ifB, ifA, "right") + "</div>" +
+          '<div class="pv-foot"><span><b>Series:</b> ' + seriesTxt + "</span><span><b>Last meeting:</b> " + lastTxt + "</span>" +
+            (meets.length ? '<span><a href="#/rivalries/' + enc(a) + "/" + enc(b) + '">Full rivalry →</a></span>' : "") + "</div></article>" };
+      });
+      const maxSwing = Math.max.apply(null, cards.map((c) => c.swing));
+      const list = cards.sort((x, y) => y.swing - x.swing).map((c) => (c.swing === maxSwing && maxSwing > 0.1 ? c.html.replace('<article class="pv">', '<article class="pv big"><div class="pv-flag">Biggest playoff stakes</div>') : c.html));
+      return head(m.yr + " · Week " + wk) +
+        '<p class="note">Win chances and projected scores come from each team’s ' + esc(m.yr) + " scoring so far (the same model as " + link("odds", "Playoff Odds") +
+        "). “With a win / with a loss” is each team’s playoff chance depending on how this game goes. Games are sorted by how much is riding on them.</p>" +
+        '<div class="pv-list">' + list.join("") + "</div>";
+    });
+  }
+
   /* ============================== weekly recap ============================== */
 
   const pickLine = (seed, lines) => lines[Math.abs([...seed].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7)) % lines.length];
@@ -2098,7 +2178,8 @@
         '<div class="chips weeks">' + weeks.map((w) => chip(w, label(w))).join("") + chip("bracket", "Bracket") + "</div>";
       if (showBracket) return head + (playoffBracket(d.games, yr) || '<div class="state">Not enough games yet to draw a bracket.</div>');
       return head +
-        '<p class="note">Tap a game for both lineups. ' + link("recap/" + enc(yr) + "/" + enc(wk), "Read the " + (isRegularWeek(wk) ? "Week " + wk : wk) + " recap →") + "</p>" +
+        '<p class="note">Tap a game for both lineups. ' + link("recap/" + enc(yr) + "/" + enc(wk), "Read the " + (isRegularWeek(wk) ? "Week " + wk : wk) + " recap →") +
+          (yr === yrs[0] ? " &nbsp; " + link("preview", "Next week’s preview →") : "") + "</p>" +
         (games.length ? '<div class="scores">' + games.map((g) => scoreCard(g)).join("") + "</div>" : '<p class="empty">No scores entered for this week yet.</p>');
     });
   }
@@ -2185,7 +2266,7 @@
     const parts = (location.hash.replace(/^#\/?/, "") || "").split("/").map(decodeURIComponent);
     const name = parts[0] || "home";
     document.querySelectorAll(".nav a").forEach((a) => {
-      const navOf = { player: "players", ranks: "players", game: "games", card: "cards", recap: "games" };
+      const navOf = { player: "players", ranks: "players", game: "games", card: "cards", recap: "games", preview: "games" };
       const on = a.dataset.route === (navOf[name] || name);
       a.classList.toggle("active", on);
       if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
@@ -2208,6 +2289,7 @@
     else if (name === "trades") p = pageTrades(parts[1], parts[2], parts[3]);
     else if (name === "check") p = pageCheck();
     else if (name === "recap") p = pageRecap(parts[1], parts[2]);
+    else if (name === "preview") p = pagePreview();
     else if (name === "players") p = pagePlayers();
     else if (name === "ranks") p = pageRanks(parts[1], parts[2], parts[3]);
     else if (name === "odds") p = pageOdds();
