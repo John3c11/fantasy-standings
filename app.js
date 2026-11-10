@@ -411,7 +411,8 @@
       const st = d.standings.filter((r) => r.Year === yr);
       const html =
         '<div class="hero"><span class="kicker">' + esc(yr) + " season · " + esc(latestLabel) + "</span><h1>" + esc(CFG.name) + " Fantasy</h1></div>" +
-        section(latestLabel + " results", '<div class="scores">' + latest.map((g) => scoreCard(g, post.length ? g.Week : "")).join("") + "</div>") +
+        section(latestLabel + " results", '<div class="scores">' + latest.map((g) => scoreCard(g, post.length ? g.Week : "")).join("") + "</div>",
+          latest.length ? link("recap/" + enc(yr) + "/" + enc(latest[latest.length - 1].Week), "Read the recap →") : "") +
         '<div class="grid-2">' +
         section(yr + " standings", table("home-st", [
           { key: "Player", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.Player), r.Player) },
@@ -1669,6 +1670,165 @@
     });
   }
 
+  /* ============================== weekly recap ============================== */
+
+  const pickLine = (seed, lines) => lines[Math.abs([...seed].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7)) % lines.length];
+
+  function pageRecap(yArg, wArg) {
+    return loadMany(["games", "rosters", "positions", "lineups"]).then((d) => {
+      const all = playedGames(d.games);
+      const yrs = uniq(all.map((g) => g.Year)).sort((a, b) => b - a);
+      if (!yrs.length) return '<div class="state">No games yet.</div>';
+      const yr = yrs.includes(yArg) ? yArg : yrs[0];
+      const inYr = all.filter((g) => g.Year === yr);
+      const weeks = uniq(inYr.map((g) => g.Week)).sort((a, b) => weekSortKey(a) - weekSortKey(b));
+      const wk = weeks.includes(wArg) ? wArg : weeks[weeks.length - 1];
+      const games = inYr.filter((g) => g.Week === wk);
+      const reg = isRegularWeek(wk);
+      const wkName = reg ? "Week " + wk : wk;
+      const rw = rosterWeek(wk);
+      const posOf = posLookup(d);
+
+      // each game from the winner's side
+      const G = games.map((g) => {
+        const a = num(g["P1 Points"]), b = num(g["P2 Points"]), w = gameWinner(g);
+        const aWon = w === g["Player 1"];
+        return { g: g, tie: !w, w: aWon || !w ? g["Player 1"] : g["Player 2"], l: aWon || !w ? g["Player 2"] : g["Player 1"],
+          ws: aWon || !w ? a : b, ls: aWon || !w ? b : a, margin: Math.abs(a - b), total: a + b };
+      });
+      const scores = [];
+      games.forEach((g) => { scores.push({ m: g["Player 1"], s: num(g["P1 Points"]) }); scores.push({ m: g["Player 2"], s: num(g["P2 Points"]) }); });
+      scores.sort((x, y) => y.s - x.s);
+      const avg = scores.reduce((t, x) => t + x.s, 0) / (scores.length || 1);
+      const boxLink = (x) => '<a href="#/game/' + gameRoute(x.g.Year, x.g.Week, x.g["Player 1"], x.g["Player 2"]) + '">Box score</a>';
+      const sc = (v) => v.toFixed(2);
+
+      // rosters for this week
+      const ros = d.rosters.filter((r) => r.Year === yr && +r.Week === rw && r.Player && r.Player !== "(Empty)" && isNum(r.Points));
+      const starters = ros.filter((r) => r.Started === "Yes").sort((a, b) => num(b.Points) - num(a.Points));
+      const bench = ros.filter((r) => r.Started !== "Yes" && r.Slot !== "IR").sort((a, b) => num(b.Points) - num(a.Points));
+      // projected team totals from starters' projections (for upsets)
+      const proj = {};
+      ros.filter((r) => r.Started === "Yes" && isNum(r["Proj Pts"])).forEach((r) => (proj[r.Manager] = (proj[r.Manager] || 0) + num(r["Proj Pts"])));
+      const lu = d.lineups.filter((r) => r.Year === yr && +r.Week === rw && isNum(r["Bench Left"]));
+
+      const items = [];   // {key, title, big, who, text, link}
+      const text = [];    // plain-text lines for the group chat
+      const close = G.slice().sort((a, b) => a.margin - b.margin)[0];
+      const blow = G.slice().sort((a, b) => b.margin - a.margin)[0];
+      const seed = yr + wk;
+      if (close) {
+        items.push({ title: "Game of the week", big: "by " + close.margin.toFixed(2), who: close.w,
+          text: close.tie ? esc(close.w) + " and " + esc(close.l) + " finished dead even, " + sc(close.ws) + " apiece."
+            : esc(close.w) + " " + pickLine(seed + "c", ["edged", "survived", "slipped past", "held off"]) + " " + esc(close.l) + ", " + sc(close.ws) + "–" + sc(close.ls) + ".", link: boxLink(close) });
+        text.push("🔥 Game of the week: " + close.w + " " + sc(close.ws) + " – " + sc(close.ls) + " " + close.l);
+      }
+      if (blow && blow !== close) {
+        items.push({ title: "Blowout", big: "+" + blow.margin.toFixed(2), who: blow.w,
+          text: esc(blow.w) + " " + pickLine(seed + "b", ["ran over", "flattened", "embarrassed", "cruised past"]) + " " + esc(blow.l) + ", " + sc(blow.ws) + "–" + sc(blow.ls) + ".", link: boxLink(blow) });
+        text.push("💥 Blowout: " + blow.w + " beat " + blow.l + " by " + blow.margin.toFixed(2));
+      }
+      if (scores.length) {
+        const top = scores[0], low = scores[scores.length - 1];
+        items.push({ title: "Top score", big: sc(top.s), who: top.m, text: esc(top.m) + " led the league, " + (top.s - avg).toFixed(1) + " over the week’s average of " + avg.toFixed(1) + ".", link: "" });
+        items.push({ title: "Low score", big: sc(low.s), who: low.m, text: esc(low.m) + " " + pickLine(seed + "l", ["brought up the rear", "had the week’s worst score", "would like this one back"]) + ".", link: "" });
+        text.push("🏆 Top score: " + top.m + " " + sc(top.s) + "   🧊 Low score: " + low.m + " " + sc(low.s));
+      }
+      // upset by projection
+      const ups = G.filter((x) => !x.tie && proj[x.w] && proj[x.l] && proj[x.l] > proj[x.w]).sort((a, b) => (proj[b.l] - proj[b.w]) - (proj[a.l] - proj[a.w]))[0];
+      if (ups) {
+        items.push({ title: "Upset", big: "+" + (proj[ups.l] - proj[ups.w]).toFixed(1), who: ups.w,
+          text: esc(ups.w) + " was projected to lose by " + (proj[ups.l] - proj[ups.w]).toFixed(1) + " and beat " + esc(ups.l) + " anyway.", link: boxLink(ups) });
+        text.push("😮 Upset: " + ups.w + " beat " + ups.l + " (projected to lose by " + (proj[ups.l] - proj[ups.w]).toFixed(1) + ")");
+      }
+      // player of the week + bench blunder
+      if (starters.length) {
+        const p = starters[0];
+        items.push({ title: "Player of the week", big: fmt(p.Points), who: p.Manager,
+          text: plink(p.Player) + (posOf[p.Player] ? ' <span class="tag">' + esc(posOf[p.Player]) + "</span>" : "") + " put up " + fmt(p.Points) + " for " + esc(p.Manager) + ".", link: "" });
+        text.push("⭐ Player of the week: " + p.Player + " " + fmt(p.Points) + " (" + p.Manager + ")");
+      }
+      const blunder = lu.slice().sort((a, b) => num(b["Bench Left"]) - num(a["Bench Left"]))[0];
+      if (blunder && num(blunder["Bench Left"]) > 0) {
+        const lost = num(blunder["Self-Inflicted Loss"]) === 1;
+        const bb = bench.find((r) => r.Manager === blunder.Manager);
+        items.push({ title: lost ? "Self-inflicted loss" : "Bench blunder", big: fmt(blunder["Bench Left"]) + " left", who: blunder.Manager,
+          text: esc(blunder.Manager) + " left " + fmt(blunder["Bench Left"]) + " points on the bench" + (bb ? ", including " + plink(bb.Player) + " (" + fmt(bb.Points) + ")" : "") +
+            (lost ? ", and the right lineup would have won it." : "."), link: "" });
+        text.push("🪑 " + (lost ? "Self-inflicted loss" : "Bench blunder") + ": " + blunder.Manager + " left " + fmt(blunder["Bench Left"]) + " on the bench" + (lost ? " and lost" : ""));
+      }
+
+      // standings movement (regular season only)
+      let movers = "";
+      if (reg) {
+        const regGames = inYr.filter((g) => isRegularWeek(g.Week));
+        const table_ = (upTo) => {
+          const t = {};
+          regGames.filter((g) => +g.Week <= upTo).forEach((g) => {
+            const w = gameWinner(g);
+            [[g["Player 1"], num(g["P1 Points"])], [g["Player 2"], num(g["P2 Points"])]].forEach(([m, pts]) => {
+              const o = (t[m] = t[m] || { m: m, w: 0, l: 0, t: 0, pf: 0, streak: 0 });
+              o.pf += pts;
+              if (!w) { o.t++; o.streak = 0; } else if (w === m) { o.w++; o.streak = o.streak > 0 ? o.streak + 1 : 1; } else { o.l++; o.streak = o.streak < 0 ? o.streak - 1 : -1; }
+            });
+          });
+          const list = Object.values(t).sort((a, b) => (b.w + b.t / 2) - (a.w + a.t / 2) || b.pf - a.pf);
+          list.forEach((o, i) => (o.rank = i + 1));
+          return list;
+        };
+        const now = table_(+wk), before = +wk > 1 ? table_(+wk - 1) : [];
+        const prevRank = {};
+        before.forEach((o) => (prevRank[o.m] = o.rank));
+        const rec = (o) => o.w + "-" + o.l + (o.t ? "-" + o.t : "");
+        movers = section("Standings after " + wkName, '<div class="scroll"><table class="recap-st"><thead><tr><th scope="col" class="num">#</th><th scope="col">Manager</th><th scope="col" class="num">Record</th>' +
+          '<th scope="col" class="num">PF</th><th scope="col" class="num">Move</th><th scope="col" class="num">Streak</th></tr></thead><tbody>' +
+          now.map((o) => {
+            const mv = prevRank[o.m] ? prevRank[o.m] - o.rank : 0;
+            return "<tr" + (o.rank <= 6 ? "" : ' class="out"') + '><td class="num rank">' + o.rank + '</td><td class="name">' + link("career/" + enc(o.m), o.m) + '</td><td class="num">' + rec(o) +
+              '</td><td class="num">' + o.pf.toFixed(1) + '</td><td class="num">' + (mv > 0 ? '<span class="pos">▲' + mv + "</span>" : mv < 0 ? '<span class="neg">▼' + -mv + "</span>" : '<span class="muted">–</span>') +
+              '</td><td class="num">' + (o.streak > 0 ? "W" + o.streak : o.streak < 0 ? "L" + -o.streak : "—") + "</td></tr>";
+          }).join("") + "</tbody></table></div>" + '<p class="note">Top 6 make the playoffs; the line sits under 6th.</p>', "Through " + wkName);
+        const up = now.filter((o) => prevRank[o.m]).sort((a, b) => (prevRank[b.m] - b.rank) - (prevRank[a.m] - a.rank))[0];
+        if (up && prevRank[up.m] - up.rank >= 2) text.push("📈 Biggest climb: " + up.m + " up " + (prevRank[up.m] - up.rank) + " to #" + up.rank);
+        const hot = now.filter((o) => o.streak >= 3).sort((a, b) => b.streak - a.streak)[0];
+        const cold = now.filter((o) => o.streak <= -3).sort((a, b) => a.streak - b.streak)[0];
+        if (hot) text.push("🔥 " + hot.m + " has won " + hot.streak + " straight");
+        if (cold) text.push("🥶 " + cold.m + " has lost " + -cold.streak + " straight");
+      }
+
+      // headline
+      const lead = close ? (blow && blow.margin > 40 ? blow.w + " rolls, " : "") + (close.margin < 5 ? close.w + " survives a thriller" : close.w + " edges " + close.l) : wkName;
+      const headline = wkName + ": " + lead;
+      const results = G.map((x) => (x.tie ? x.w + " and " + x.l + " tied " + sc(x.ws) : x.w + " beat " + x.l + " " + sc(x.ws) + "–" + sc(x.ls)));
+      const chat = [CFG.name + " · " + yr + " " + wkName + " recap", headline, ""].concat(results, [""], text).join("\n");
+
+      const nav = filterBar([
+        { label: "Year", items: yrs.map((y) => ["recap/" + y, y]), current: "recap/" + yr },
+        { label: "Week", items: weeks.map((w) => ["recap/" + yr + "/" + enc(w), isRegularWeek(w) ? "Week " + w : w]), current: "recap/" + yr + "/" + enc(wk) },
+      ]);
+      return '<div class="hero"><span class="kicker">' + esc(yr) + " · " + esc(wkName) + ' recap</span><h1 class="recap-h1">' + esc(headline) + "</h1></div>" + nav +
+        '<div class="recap-actions"><button type="button" class="chip" data-copy-recap>Copy for the group chat</button>' +
+        '<a class="chip" href="#/games/' + enc(yr) + "/" + (reg ? enc(wk) : "bracket") + '">' + (reg ? "All " + esc(wkName) + " games" : "Playoff bracket") + "</a></div>" +
+        '<textarea class="sr" id="recap-text" aria-hidden="true" tabindex="-1">' + esc(chat) + "</textarea>" +
+        section("Results", '<ul class="recap-results">' + G.map((x) => "<li>" + (x.tie ? "<b>" + esc(x.w) + "</b> and <b>" + esc(x.l) + "</b> tied"
+          : "<b>" + esc(x.w) + "</b> beat " + esc(x.l)) + ' <span class="num">' + sc(x.ws) + "–" + sc(x.ls) + "</span> " + boxLink(x) + "</li>").join("") + "</ul>") +
+        section("Highlights", '<div class="recap-grid">' + items.map((it) => '<article class="recap-card"><div class="rc-title">' + esc(it.title) + '</div><div class="rc-big">' + esc(it.big) +
+          '</div><div class="rc-who">' + link("career/" + enc(it.who), it.who) + '</div><p class="rc-text">' + it.text + "</p>" + (it.link ? '<div class="rc-link">' + it.link + "</div>" : "") + "</article>").join("") + "</div>") +
+        movers;
+    });
+  }
+
+  // copy the recap text
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-copy-recap]");
+    if (!b) return;
+    const t = document.getElementById("recap-text");
+    if (!t) return;
+    const done = () => { b.textContent = "Copied ✓"; setTimeout(() => (b.textContent = "Copy for the group chat"), 2000); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t.value).then(done, () => { t.select(); document.execCommand("copy"); done(); });
+    else { t.select(); document.execCommand("copy"); done(); }
+  });
+
   /* ============================== sheet check (hidden page: #/check) ============================== */
 
   const PLAYOFF_LABEL = /^(round [123]|3rd place|5th place|toilet bowl [123])$/i;
@@ -1938,7 +2098,7 @@
         '<div class="chips weeks">' + weeks.map((w) => chip(w, label(w))).join("") + chip("bracket", "Bracket") + "</div>";
       if (showBracket) return head + (playoffBracket(d.games, yr) || '<div class="state">Not enough games yet to draw a bracket.</div>');
       return head +
-        '<p class="note">Tap a game for both lineups.</p>' +
+        '<p class="note">Tap a game for both lineups. ' + link("recap/" + enc(yr) + "/" + enc(wk), "Read the " + (isRegularWeek(wk) ? "Week " + wk : wk) + " recap →") + "</p>" +
         (games.length ? '<div class="scores">' + games.map((g) => scoreCard(g)).join("") + "</div>" : '<p class="empty">No scores entered for this week yet.</p>');
     });
   }
@@ -2025,7 +2185,7 @@
     const parts = (location.hash.replace(/^#\/?/, "") || "").split("/").map(decodeURIComponent);
     const name = parts[0] || "home";
     document.querySelectorAll(".nav a").forEach((a) => {
-      const navOf = { player: "players", ranks: "players", game: "games", card: "cards" };
+      const navOf = { player: "players", ranks: "players", game: "games", card: "cards", recap: "games" };
       const on = a.dataset.route === (navOf[name] || name);
       a.classList.toggle("active", on);
       if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
@@ -2047,6 +2207,7 @@
     else if (name === "records") p = pageRecords();
     else if (name === "trades") p = pageTrades(parts[1], parts[2], parts[3]);
     else if (name === "check") p = pageCheck();
+    else if (name === "recap") p = pageRecap(parts[1], parts[2]);
     else if (name === "players") p = pagePlayers();
     else if (name === "ranks") p = pageRanks(parts[1], parts[2], parts[3]);
     else if (name === "odds") p = pageOdds();

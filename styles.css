@@ -533,3 +533,21 @@ a.bk-mini:hover { border-color: var(--amber); color: var(--chalk); }
 .chk-n { font-family: var(--mono); font-size: 15px; color: var(--chalk-dim); white-space: nowrap; }
 .chk-list li.warn .chk-n { color: var(--amber); }
 .chk-sec { scroll-margin-top: 16px; }
+
+/* ---------- weekly recap ---------- */
+h1.recap-h1 { font-size: clamp(28px, 4.4vw, 44px); }
+.recap-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+button.chip { font-family: inherit; cursor: pointer; background: transparent; color: var(--chalk); }
+.recap-results { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 8px; }
+.recap-results li { background: var(--panel); padding: 10px 14px; border-left: 4px solid var(--amber); font-size: 18px; }
+.recap-results .num { font-family: var(--mono); margin: 0 6px; }
+.recap-results a { display: block; margin-top: 2px; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--chalk-dim); }
+.recap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.recap-card { background: #111311; border: 2px solid var(--line); padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.rc-title { font-size: 13px; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; color: var(--amber); }
+.rc-big { font-family: var(--mono); font-size: 36px; color: var(--amber); line-height: 1.1; }
+.rc-who a { font-size: 22px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; text-decoration: none; }
+.rc-text { margin: 4px 0 0; color: var(--chalk-dim); font-size: 17px; line-height: 1.35; }
+.rc-link a { font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--chalk-dim); }
+table.recap-st tr.out td { opacity: 0.7; }
+table.recap-st tbody tr:nth-child(6) td { border-bottom: 3px solid var(--amber); }
