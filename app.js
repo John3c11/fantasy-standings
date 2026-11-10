@@ -61,7 +61,7 @@
         o[h] = v;
         if (v !== "") any = true;
       });
-      if (any) out.push(o);
+      if (any) { Object.defineProperty(o, "_row", { value: r + 1 }); out.push(o); }
     }
     out.columns = head.filter(Boolean);
     return out;
@@ -153,12 +153,17 @@
 
   /* ============================== helpers ============================== */
 
+  // Strict like Sheets: "1,210.5", "+3.2" and "85%" are numbers; "112,4", "12 pts" or "1O5" are not.
   function num(v) {
     if (v === undefined || v === null) return NaN;
-    const s = String(v).replace(/[,+]/g, "").trim();
+    let s = String(v).trim();
     if (s === "") return NaN;
-    if (s.endsWith("%")) return parseFloat(s) / 100;
-    return parseFloat(s);
+    if (/^[+-]?\d{1,3}(,\d{3})+(\.\d+)?%?$/.test(s)) s = s.replace(/,/g, "");
+    const pctSign = s.endsWith("%");
+    if (pctSign) s = s.slice(0, -1).trim();
+    if (!/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(s)) return NaN;
+    const n = parseFloat(s);
+    return pctSign ? n / 100 : n;
   }
   const isNum = (v) => !isNaN(num(v));
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
@@ -450,8 +455,8 @@
       }), "Tap a column to sort"));
 
       const post = playedGames(d.games).filter((g) => g.Year === yr && !isRegularWeek(g.Week));
-      if (post.length) html.push(section("Playoffs", '<div class="scores">' + post.map((g) => scoreCard(g, g.Week)).join("") + "</div>",
-        link("games/" + enc(yr) + "/bracket", "See the bracket →")));
+      const mb = playoffBracket(d.games, yr, true);
+      if (mb) html.push(mb);
 
       const mv = d.mvps.filter((r) => r.Year === yr);
       if (mv.length) html.push(section("Team MVPs", table("season-mvp-" + yr, [
@@ -496,7 +501,8 @@
     return Object.values(t).sort((x, y) => y.w - x.w || y.pf - x.pf).map((o) => o.m);
   }
 
-  function playoffBracket(games, yr) {
+  // mini = small, non-interactive copy for the Season page (the whole thing links to the full bracket)
+  function playoffBracket(games, yr, mini) {
     let seeds = seedsFor(games, yr);
     if (seeds.length < 6) return "";
     {
@@ -527,7 +533,8 @@
     const [s1, s2, s3, s4, s5, s6] = seeds;
     // Round 1: 4v5 feeds the 1 seed, 3v6 feeds the 2 seed
     const r1Top = mark(r1.find((g) => has(g, s4) || has(g, s5))) || stub(s4, s5, "Round 1");
-    const r1Bot = mark(r1.find((g) => has(g, s3) || has(g, s6))) || stub(s3, s6, "Round 1");
+    const r1Bot = mark(r1.find((g) => (has(g, s3) || has(g, s6)) && !(r1Top.played && g.Week === r1Top.Week && g["Player 1"] === r1Top["Player 1"] && g["Player 2"] === r1Top["Player 2"])) ||
+      r1.find((g) => !(r1Top.played && g["Player 1"] === r1Top["Player 1"] && g["Player 2"] === r1Top["Player 2"]))) || stub(s3, s6, "Round 1");
     const semiTop = mark(r2.find((g) => has(g, s1))) || stub(s1, winner(r1Top), "Round 2");
     const semiBot = mark(r2.find((g) => has(g, s2))) || stub(s2, winner(r1Bot), "Round 2");
     const final = mark(fin[0]) || stub(winner(semiTop), winner(semiBot), "Round 3");
@@ -549,13 +556,15 @@
       // higher seed on top
       const flip = g["Player 1"] && g["Player 2"] && (seedOf[g["Player 1"]] || 99) > (seedOf[g["Player 2"]] || 99);
       const inner = flip ? line(g, "Player 2") + line(g, "Player 1") : line(g, "Player 1") + line(g, "Player 2");
+      if (mini) return '<div class="bk-match' + (g.played ? "" : " pending") + '">' + inner + "</div>";
       return g.played
         ? '<a class="bk-match" href="#/game/' + gameRoute(g.Year, g.Week, g["Player 1"], g["Player 2"]) + '" aria-label="Box score: ' + esc(g["Player 1"]) + " vs " + esc(g["Player 2"]) + '">' + inner + "</a>"
         : '<div class="bk-match pending">' + inner + "</div>";
     };
 
-    const bracket =
-      '<div class="scroll"><div class="bracket">' +
+    const champName = (m) => (mini ? '<span class="bk-champ-name">' + esc(m) + "</span>" : link("career/" + enc(m), m));
+    const grid =
+      '<div class="bracket' + (mini ? " mini" : "") + '">' +
       '<div class="bk-col"><div class="bk-head">Round 1</div><div class="bk-slots">' +
         '<div class="bk-slot">' + box(r1Top) + "</div>" +
         '<div class="bk-slot">' + box(r1Bot) + "</div></div></div>" +
@@ -566,11 +575,17 @@
         '<div class="bk-slot">' + box(final) + "</div></div></div>" +
       '<div class="bk-col last"><div class="bk-head">Champion</div><div class="bk-slots">' +
         '<div class="bk-slot"><div class="bk-champ' + (champ || coChamps ? "" : " tbd") + '">' +
-        (coChamps ? '<span class="bk-trophy">Co-champions</span>' + coChamps.map((m) => link("career/" + enc(m), m)).join("") +
+        (coChamps ? '<span class="bk-trophy">Co-champions</span>' + coChamps.map(champName).join("") +
           (declaredTie(final) ? '<span class="bk-why">Final declared a tie</span>' : "")
-          : champ ? '<span class="bk-trophy">Champion</span>' + link("career/" + enc(champ), champ) : "TBD") +
+          : champ ? '<span class="bk-trophy">Champion</span>' + champName(champ) : "TBD") +
         "</div></div></div></div>" +
-      "</div></div>" +
+      "</div>";
+    if (mini) {
+      return section(projected ? "Playoff picture" : "Playoffs",
+        '<a class="bk-mini" href="#/games/' + enc(yr) + '/bracket" aria-label="Open the full ' + esc(yr) + ' bracket">' + grid + "</a>",
+        link("games/" + enc(yr) + "/bracket", "Full bracket →"));
+    }
+    const bracket = '<div class="scroll">' + grid + "</div>" +
       '<p class="note bk-note">Byes: ' + esc(s1) + " (1 seed) and " + esc(s2) + " (2 seed). Seeds by regular-season wins, then points for.</p>";
 
     // everything else: 3rd place, 5th place, toilet bowl
@@ -1406,6 +1421,15 @@
     });
   }
 
+  // in-page jumps (the hash is used for routing, so scroll instead)
+  app.addEventListener("click", (e) => {
+    const j = e.target.closest("[data-jump]");
+    if (!j) return;
+    e.preventDefault();
+    const el = document.getElementById(j.dataset.jump);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
   const setRec = (tr, open) => {
     tr.setAttribute("aria-expanded", String(open));
     const box = document.getElementById(tr.getAttribute("aria-controls"));
@@ -1642,6 +1666,127 @@
       html.push(section("What’s at stake in week " + m.nextWeek, '<p class="note">Each person’s playoff odds if they win or lose their next game. The ± is how much that one game is worth. Biggest swings first.</p>' +
         '<div class="scores">' + cards.map((c) => c.html).join("") + "</div>"));
       return html.join("");
+    });
+  }
+
+  /* ============================== sheet check (hidden page: #/check) ============================== */
+
+  const PLAYOFF_LABEL = /^(round [123]|3rd place|5th place|toilet bowl [123])$/i;
+
+  function pageCheck() {
+    // Games is read raw here (no name tidying) so typos actually show up
+    const rawGames = fetchCsv(CFG.tabs.games).then((t) => toObjects(parseCSV(t)));
+    return Promise.all([rawGames, loadMany(["rosters", "positions"])]).then(([games, d]) => {
+      const checks = [];
+      const add = (title, why, rows, cols) => checks.push({ title: title, why: why, rows: rows, cols: cols });
+      const gRow = (g) => "Row " + g._row;
+      const gameLink = (g) => (isNum(g["P1 Points"]) && isNum(g["P2 Points"]) ? '<a href="#/game/' + gameRoute(g.Year, g.Week, g["Player 1"], g["Player 2"]) + '">' + esc(g.Year) + " · " + esc(g.Week) + "</a>" : esc(g.Year) + " · " + esc(g.Week));
+      const entered = games.filter((g) => g["Player 1"] || g["Player 2"]);
+
+      // 1. scores that aren't numbers
+      add("Scores that aren’t numbers", "A comma instead of a period, a stray space or a letter makes Sheets treat a score as text, and the game drops out of everything.",
+        entered.filter((g) => (g["P1 Points"] !== "" && !isNum(g["P1 Points"])) || (g["P2 Points"] !== "" && !isNum(g["P2 Points"])))
+          .map((g) => [gRow(g), esc(g.Year) + " · " + esc(g.Week), esc(g["Player 1"]) + " vs " + esc(g["Player 2"]), "“" + esc(g["P1 Points"]) + "” / “" + esc(g["P2 Points"]) + "”"]),
+        ["Games row", "Week", "Game", "Scores as typed"]);
+
+      // 2. names that don't exactly match the usual spelling
+      const counts = {};
+      entered.forEach((g) => ["Player 1", "Player 2"].forEach((c) => { if (g[c]) counts[g[c]] = (counts[g[c]] || 0) + 1; }));
+      const canon = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 8);
+      const canonKey = {};
+      canon.forEach((n) => (canonKey[n.toLowerCase().replace(/\s+/g, " ")] = n));
+      const badNames = [];
+      entered.forEach((g) => ["Player 1", "Player 2", "Winner"].forEach((c) => {
+        const v = g[c];
+        if (!v || canon.includes(v) || (c === "Winner" && /^tie$/i.test(v))) return;
+        const fix = canonKey[v.toLowerCase().replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\s+/g, " ")];
+        badNames.push([gRow(g), esc(g.Year) + " · " + esc(g.Week), esc(c), "“" + esc(v) + "”" + (fix ? " → should be “" + esc(fix) + "”" : " → not one of the 8 managers")]);
+      }));
+      add("Names that don’t match", "The 8 managers are " + canon.map(esc).join(", ") + ". Anything else (wrong capitals, extra spaces, typos) can create a ghost manager.",
+        badNames, ["Games row", "Week", "Column", "Problem"]);
+
+      // 3. week labels
+      add("Week labels the site doesn’t recognize", "Weeks should be 1–14, or Round 1–3, 3rd Place, 5th Place, Toilet Bowl 1–3.",
+        entered.filter((g) => !(isNum(g.Week) && +g.Week >= 1 && +g.Week <= 17) && !PLAYOFF_LABEL.test(g.Week))
+          .map((g) => [gRow(g), esc(g.Year), "“" + esc(g.Week) + "”", esc(g["Player 1"]) + " vs " + esc(g["Player 2"])]),
+        ["Games row", "Year", "Week as typed", "Game"]);
+
+      // 4. winner column disagrees with the scores
+      add("Winner doesn’t match the scores", "If the Winner column is filled in, it should name the higher scorer (or say Tie for a declared tie).",
+        entered.filter((g) => g.Winner && isNum(g["P1 Points"]) && isNum(g["P2 Points"]) && !/^tie$/i.test(g.Winner) &&
+          g.Winner !== (num(g["P1 Points"]) > num(g["P2 Points"]) ? g["Player 1"] : num(g["P2 Points"]) > num(g["P1 Points"]) ? g["Player 2"] : g.Winner))
+          .map((g) => [gRow(g), gameLink(g), esc(g["Player 1"]) + " " + esc(g["P1 Points"]) + " – " + esc(g["P2 Points"]) + " " + esc(g["Player 2"]), "Winner says “" + esc(g.Winner) + "”"]),
+        ["Games row", "Week", "Score", "Problem"]);
+
+      // 5. odd scores
+      add("Scores that look wrong", "Negative scores or anything over 250 is almost always a typo.",
+        entered.filter((g) => ["P1 Points", "P2 Points"].some((c) => isNum(g[c]) && (num(g[c]) < 0 || num(g[c]) > 250)))
+          .map((g) => [gRow(g), gameLink(g), esc(g["Player 1"]) + " vs " + esc(g["Player 2"]), esc(g["P1 Points"]) + " – " + esc(g["P2 Points"])]),
+        ["Games row", "Week", "Game", "Scores"]);
+
+      // 6. regular-season game counts (one game per manager per week)
+      const played = entered.filter((g) => isNum(g["P1 Points"]) && isNum(g["P2 Points"]) && isNum(g.Week) && +g.Week <= 14);
+      const fix = (n) => canonKey[String(n).toLowerCase().replace(/\s+/g, " ")] || n;
+      const countIssues = [];
+      uniq(played.map((g) => g.Year)).sort().forEach((y) => {
+        const wks = uniq(played.filter((g) => g.Year === y).map((g) => g.Week)).sort((a, b) => a - b);
+        wks.forEach((w) => {
+          const inWk = played.filter((g) => g.Year === y && g.Week === w);
+          const seen = {};
+          inWk.forEach((g) => [g["Player 1"], g["Player 2"]].forEach((m) => { m = fix(m); seen[m] = (seen[m] || 0) + 1; }));
+          canon.forEach((m) => {
+            if (!seen[m]) countIssues.push([esc(y), "Week " + esc(w), esc(m), "No game entered"]);
+            else if (seen[m] > 1) countIssues.push([esc(y), "Week " + esc(w), esc(m), "Listed in " + seen[m] + " games"]);
+          });
+        });
+      });
+      add("Missing or doubled games (weeks 1–14)", "Every manager should play exactly once in each regular-season week that has scores.",
+        countIssues, ["Year", "Week", "Manager", "Problem"]);
+
+      // 7. rosters: missing weeks, duplicates, and starter totals that don't match the score
+      const rkey = (y, w, m) => y + "|" + w + "|" + m;
+      const rost = {};
+      d.rosters.forEach((r) => {
+        const k = rkey(r.Year, r.Week, r.Manager);
+        const o = (rost[k] = rost[k] || { pts: 0, players: {}, dup: [] });
+        if (r.Started === "Yes" && isNum(r.Points)) o.pts += num(r.Points);
+        if (r.Player && r.Player !== "(Empty)") { if (o.players[r.Player]) o.dup.push(r.Player); o.players[r.Player] = 1; }
+      });
+      const rosterIssues = [];
+      const rosterYears = new Set(d.rosters.map((r) => r.Year));
+      entered.filter((g) => isNum(g["P1 Points"]) && isNum(g["P2 Points"]) && rosterYears.has(g.Year)).forEach((g) => {
+        const w = rosterWeek(g.Week);
+        [["Player 1", "P1 Points"], ["Player 2", "P2 Points"]].forEach(([pc, sc]) => {
+          const m = fix(g[pc]), o = rost[rkey(g.Year, String(w), m)];
+          if (!o) { rosterIssues.push([gameLink(g), esc(m), "No roster rows for this week", ""]); return; }
+          if (o.dup.length) rosterIssues.push([gameLink(g), esc(m), "Same player pasted twice", esc(uniq(o.dup).join(", "))]);
+          const diff = o.pts - num(g[sc]);
+          if (Math.abs(diff) > 0.5) rosterIssues.push([gameLink(g), esc(m), "Starters add up to " + o.pts.toFixed(2) + ", score says " + num(g[sc]).toFixed(2), signed(diff, 2)]);
+        });
+      });
+      add("Rosters that don’t line up with Games", "Checks each game against the Rosters tab: the week was pulled, nobody was pasted twice, and the starters add up to the score in Games.",
+        rosterIssues, ["Game", "Manager", "Problem", "Off by"]);
+
+      // 8. players with no position
+      const hasPos = new Set(d.positions.filter((r) => r["Final Pos"] || r["Derived Pos"]).map((r) => r.Player));
+      const noPos = uniq(d.rosters.filter((r) => r.Player && r.Player !== "(Empty)" && !hasPos.has(r.Player)).map((r) => r.Player));
+      add("Players with no position", "These are in Rosters but have no position in the Positions tab, so they’re left out of position rankings and some records.",
+        noPos.map((n) => [plink(n)]), ["Player"]);
+
+      const bad = checks.filter((c) => c.rows.length);
+      const summary = '<div class="chk-summary ' + (bad.length ? "warn" : "ok") + '">' +
+        (bad.length ? "<b>" + bad.length + " of " + checks.length + "</b> checks found something to fix." : "<b>All " + checks.length + " checks passed.</b> The sheet looks clean.") + "</div>" +
+        '<ul class="chk-list">' + checks.map((c, i) => '<li class="' + (c.rows.length ? "warn" : "ok") + '"><a href="#/check" data-jump="chk-' + i + '">' +
+          '<span class="chk-dot" aria-hidden="true">' + (c.rows.length ? "!" : "✓") + "</span>" + esc(c.title) + '</a><span class="chk-n">' +
+          (c.rows.length ? c.rows.length + " to fix" : "OK") + "</span></li>").join("") + "</ul>";
+      const details = checks.map((c, i) => '<section class="section chk-sec" id="chk-' + i + '"><div class="section-head"><h2>' + esc(c.title) + '</h2><span class="kicker">' +
+        (c.rows.length ? c.rows.length + " to fix" : "All good") + '</span></div><p class="note">' + c.why + "</p>" +
+        (c.rows.length ? '<div class="scroll"><table><thead><tr>' + c.cols.map((h) => '<th scope="col">' + esc(h) + "</th>").join("") + "</tr></thead><tbody>" +
+          c.rows.slice(0, 200).map((r) => "<tr>" + r.map((x) => "<td>" + x + "</td>").join("") + "</tr>").join("") + "</tbody></table></div>" +
+          (c.rows.length > 200 ? '<p class="note">Showing the first 200.</p>' : "") : '<p class="empty">Nothing to fix.</p>') + "</section>").join("");
+      return '<div class="hero"><span class="kicker">Commissioner tools</span><h1>Sheet check</h1></div>' +
+        '<p class="note">Reads the sheet live and looks for the problems we’ve had to hunt down by hand. “Games row” is the row number in your Games tab. Bookmark this page; it isn’t in the menu.</p>' +
+        summary + details;
     });
   }
 
@@ -1901,6 +2046,7 @@
     else if (name === "games") p = pageGames(parts[1], parts[2]);
     else if (name === "records") p = pageRecords();
     else if (name === "trades") p = pageTrades(parts[1], parts[2], parts[3]);
+    else if (name === "check") p = pageCheck();
     else if (name === "players") p = pagePlayers();
     else if (name === "ranks") p = pageRanks(parts[1], parts[2], parts[3]);
     else if (name === "odds") p = pageOdds();
