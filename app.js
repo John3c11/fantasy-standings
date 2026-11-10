@@ -1270,6 +1270,104 @@
   }
   const wins_ = (rec) => wins(rec);
 
+  /* ============================== draft history ============================== */
+
+  const GRADES = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D", "F"];
+
+  function draftClasses(d) {
+    if (d._drafts) return d._drafts;
+    const mv = d.moves.filter((r) => r["How Acquired"] === "Draft" && r.Player && r.Manager);
+    const yrs = uniq(mv.map((r) => r.Year)).filter(isNum).sort((a, b) => b - a);
+    const out = {};
+    yrs.forEach((y) => {
+      // a player drafted once can have one row per stint; keep the drafting stint (earliest)
+      const picks = {};
+      mv.filter((r) => r.Year === y).forEach((r) => {
+        const k = r.Manager + "|" + r.Player;
+        if (!picks[k] || num(r["First Week"]) < num(picks[k]["First Week"])) picks[k] = r;
+      });
+      const list = Object.values(picks);
+      const val = (r) => num(r.Value) || 0;
+      const vals = list.map(val).sort((a, b) => b - a);
+      const stealLine = vals[Math.max(0, Math.floor(vals.length * 0.1) - 1)] || Infinity;
+      list.forEach((r) => {
+        const v = val(r), starts = num(r.Starts) || 0, last = num(r["Last Week"]);
+        r._v = v;
+        r._tag = v >= stealLine && v > 0 ? "Steal" : v > 0 ? "Hit" : starts === 0 && last && last < 8 ? "Cut by Wk " + last : starts === 0 ? "Never started" : v < 0 && starts >= 3 ? "Bust" : "Meh";
+      });
+      const teams = uniq(list.map((r) => r.Manager)).map((m) => {
+        const mine = list.filter((r) => r.Manager === m).sort((a, b) => b._v - a._v);
+        const real = mine.filter((r) => !isDefPos(r.Pos));
+        return { m: m, picks: mine, n: mine.length, hits: mine.filter((r) => r._v > 0).length, tot: mine.reduce((t, r) => t + r._v, 0),
+          best: real[0], worst: real.filter((r) => num(r.Starts) > 0).slice(-1)[0] };
+      }).sort((a, b) => b.tot - a.tot);
+      // grades by rank, spread across the scale
+      teams.forEach((t, i) => (t.grade = GRADES[Math.round(i * (GRADES.length - 1) / Math.max(1, teams.length - 1))]));
+      out[y] = { y: y, list: list, teams: teams };
+    });
+    return (d._drafts = { yrs: yrs, by: out });
+  }
+
+  function pageDraft(yArg) {
+    return loadMany(["moves", "positions", "rosters"]).then((d) => {
+      const D = draftClasses(d);
+      if (!D.yrs.length) return '<div class="hero"><span class="kicker">Drafts</span><h1>Draft history</h1></div><p class="empty">No draft data yet.</p>';
+      const yr = D.yrs.includes(yArg) ? yArg : yArg === "all" ? "all" : D.yrs[0];
+      const valTxt = (v) => '<span class="' + (v > 0 ? "pos" : v < 0 ? "neg" : "") + '">' + signed(v) + "</span>";
+      const posTag = (r) => (r.Pos ? ' <span class="tag">' + esc(r.Pos) + "</span>" : "");
+      const head = '<div class="hero"><span class="kicker">Drafts</span><h1>' + (yr === "all" ? "Draft history" : esc(yr) + " draft") + "</h1></div>" +
+        filterBar([{ label: "Draft", items: [["draft/all", "All drafts"]].concat(D.yrs.map((y) => ["draft/" + y, y + " draft"])), current: "draft/" + yr }]) +
+        '<p class="note">Every drafted player, judged by <b>Value</b>: points he scored in his manager’s starting lineup minus what a typical bench player at his position would have scored in those starts. ' +
+        "Grades rank each manager’s total draft Value that year" + (yr === D.yrs[0] ? " (this season’s grades move every week until it ends)" : "") + ". Yahoo’s pick order isn’t in the sheet, so picks are listed best to worst rather than by round.</p>";
+
+      if (yr === "all") {
+        const ms = uniq(D.yrs.flatMap((y) => D.by[y].teams.map((t) => t.m))).sort();
+        const rows = ms.map((m) => {
+          const ts = D.yrs.map((y) => D.by[y].teams.find((t) => t.m === m)).filter(Boolean);
+          const allPicks = ts.flatMap((t) => t.picks).filter((r) => !isDefPos(r.Pos));
+          const bestEver = allPicks.slice().sort((a, b) => b._v - a._v)[0];
+          return { m: m, tot: ts.reduce((t, x) => t + x.tot, 0), n: ts.reduce((t, x) => t + x.n, 0), hits: ts.reduce((t, x) => t + x.hits, 0),
+            grades: D.yrs.map((y) => { const t = D.by[y].teams.find((x) => x.m === m); return t ? t.grade : "—"; }),
+            gpa: ts.reduce((t, x) => t + (GRADES.length - 1 - GRADES.indexOf(x.grade)), 0) / (ts.length || 1), best: bestEver };
+        });
+        return head + section("Career draft report", table("draft-all", [
+          { key: "m", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.m), r.m) },
+          { key: "gpa", label: "Grades", sortVal: (r) => r.gpa, render: (r) => r.grades.map((g, i) => '<span class="grade g-' + g.charAt(0) + '" title="' + esc(D.yrs[i]) + '">' + esc(g) + "</span>").join("") },
+          { key: "tot", label: "Total Value", num: true, render: (r) => valTxt(r.tot) },
+          { key: "hits", label: "Hit rate", num: true, sortVal: (r) => r.hits / (r.n || 1), render: (r) => pct(r.hits / (r.n || 1), 0) + ' <span class="muted">(' + r.hits + "/" + r.n + ")</span>" },
+          { key: "best", label: "Best pick ever", sortVal: (r) => (r.best ? r.best._v : -Infinity), render: (r) => (r.best ? plink(r.best.Player) + ' <span class="muted">' + esc(r.best.Year) + "</span> " + valTxt(r.best._v) : "—") },
+        ], rows, { sortKey: "tot" }), "Grades newest first: " + D.yrs.join(", ")) +
+          section("Best picks ever", table("draft-best-ever", draftCols(valTxt, posTag, true), D.yrs.flatMap((y) => D.by[y].list).filter((r) => !isDefPos(r.Pos)).sort((a, b) => b._v - a._v).slice(0, 10), { sortKey: "Value" }), "Defenses not included") +
+          section("Worst picks ever", table("draft-worst-ever", draftCols(valTxt, posTag, true), D.yrs.flatMap((y) => D.by[y].list).filter((r) => !isDefPos(r.Pos) && num(r.Starts) > 0).sort((a, b) => a._v - b._v).slice(0, 10), { sortKey: "Value", sortAsc: true }), "Started and lost Value");
+      }
+
+      const C = D.by[yr];
+      const grades = section("Draft grades", '<div class="dgrades">' + C.teams.map((t) => '<a class="dgrade" href="#/draft/' + enc(yr) + '" data-jump="dt-' + enc(t.m) + '">' +
+        '<span class="grade big g-' + t.grade.charAt(0) + '">' + esc(t.grade) + '</span><span class="dg-m">' + esc(t.m) + '</span><span class="dg-v">' + valTxt(t.tot) + " · " + t.hits + "/" + t.n + " hits</span></a>").join("") + "</div>",
+        "Tap a team to jump to its picks");
+      const boards = section("Every pick", '<div class="dboards">' + C.teams.map((t) => '<article class="dboard" id="dt-' + enc(t.m) + '"><div class="db-head"><span class="grade g-' + t.grade.charAt(0) + '">' + esc(t.grade) + "</span>" +
+        link("career/" + enc(t.m), t.m) + '<span class="db-tot">' + valTxt(t.tot) + "</span></div><ol>" +
+        t.picks.map((r) => '<li><span class="db-p">' + plink(r.Player) + posTag(r) + '</span><span class="dtag t-' + r._tag.split(" ")[0].toLowerCase() + '">' + esc(r._tag) + '</span><span class="db-s">' +
+          esc(r.Starts || 0) + ' st</span><span class="db-v">' + valTxt(r._v) + "</span></li>").join("") + "</ol></article>").join("") + "</div>",
+        "Steal = top 10% of the draft · Bust = started 3+ times and lost Value");
+      const real = C.list.filter((r) => !isDefPos(r.Pos));
+      return head + grades +
+        '<div class="grid-2 even">' + section("Steals", table("draft-steals-" + yr, draftCols(valTxt, posTag, false), real.slice().sort((a, b) => b._v - a._v).slice(0, 5), { sortKey: "Value" })) +
+        section("Busts", table("draft-busts-" + yr, draftCols(valTxt, posTag, false), real.filter((r) => num(r.Starts) > 0).sort((a, b) => a._v - b._v).slice(0, 5), { sortKey: "Value", sortAsc: true })) + "</div>" +
+        boards;
+    });
+  }
+
+  function draftCols(valTxt, posTag, withYear) {
+    return [
+      { key: "Player", label: "Player", cls: "name", sortVal: (r) => r.Player, render: (r) => plink(r.Player) + posTag(r) },
+      { key: "Manager", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.Manager), r.Manager) },
+    ].concat(withYear ? [{ key: "Year", label: "Year", num: true, render: (r) => link("draft/" + r.Year, r.Year) }] : []).concat([
+      { key: "Starts", label: "Starts", num: true },
+      { key: "Value", label: "Value", num: true, sortVal: (r) => r._v, render: (r) => valTxt(r._v) },
+    ]);
+  }
+
   /* ============================== trades & pickups ============================== */
 
   const TRADE_VIEWS = [["trades", "Trades"], ["pickups", "Waiver pickups"], ["draft", "Draft"]];
@@ -1367,7 +1465,7 @@
       ];
       const best = players.slice().sort((a, b) => val(b) - val(a)).slice(0, 15);
       const worst = players.filter((r) => num(r.Starts) > 0).sort((a, b) => val(a) - val(b)).slice(0, 5);
-      return head + valueNote +
+      return head + valueNote + (view === "draft" ? '<p class="note">' + link("draft/" + (yr === "All" ? "all" : yr), "Full draft history with grades and every pick →") + "</p>" : "") +
         section(view === "pickups" ? "Pickup scorecard" : "Draft scorecard", table("tr-" + view + "-board-" + yr, [
           { key: "m", label: "Manager", cls: "name", render: (r) => link("career/" + enc(r.m), r.m) },
           { key: "n", label: label, num: true },
@@ -2438,6 +2536,7 @@
     else if (name === "check") p = pageCheck();
     else if (name === "recap") p = pageRecap(parts[1], parts[2]);
     else if (name === "alltime") p = pageAllTime();
+    else if (name === "draft") p = pageDraft(parts[1]);
     else if (name === "preview") p = pagePreview();
     else if (name === "players") p = pagePlayers();
     else if (name === "ranks") p = pageRanks(parts[1], parts[2], parts[3]);
