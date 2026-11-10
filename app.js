@@ -193,6 +193,7 @@
   /* sortable table: cols = [{key, label, num, render, sortVal, cls}] */
   function table(id, cols, rows, opts) {
     opts = opts || {};
+    if (!rows.length) return '<p class="empty">' + esc(opts.empty || "Nothing here yet.") + "</p>";
     const st = tableState[id] || { key: opts.sortKey, asc: !!opts.sortAsc };
     tableState[id] = st;
     let data = rows.slice();
@@ -235,6 +236,21 @@
     return '<section class="section"><div class="section-head"><h2>' + esc(title) + "</h2>" +
       (kicker ? '<span class="kicker">' + kicker + "</span>" : "") + "</div>" + inner + "</section>";
   }
+
+  // One compact bar of filters. Each group: { label, type: "select" | "seg", items: [[route, text]], current: route }
+  function filterBar(groups) {
+    return '<div class="fbar">' + groups.map((g) => {
+      if (g.type === "seg") {
+        return '<div class="fseg" role="group" aria-label="' + esc(g.label) + '">' + g.items.map((it) =>
+          '<a class="fseg-btn' + (it[0] === g.current ? " on" : "") + '" href="#/' + it[0] + '"' + (it[0] === g.current ? ' aria-current="page"' : "") + ">" + esc(it[1]) + "</a>").join("") + "</div>";
+      }
+      return '<label class="fsel"><span>' + esc(g.label) + '</span><select data-go>' + g.items.map((it) =>
+        '<option value="' + esc(it[0]) + '"' + (it[0] === g.current ? " selected" : "") + ">" + esc(it[1]) + "</option>").join("") + "</select></label>";
+    }).join("") + "</div>";
+  }
+  app.addEventListener("change", (e) => {
+    if (e.target.matches && e.target.matches("select[data-go]")) location.hash = "#/" + e.target.value;
+  });
 
   function chips(items, current, routeFor) {
     return '<div class="chips">' + items.map((it) =>
@@ -1050,21 +1066,21 @@
       const secs = uniq(out.map((o) => o.sec));
       const mgrCell = (m) => (m ? link("career/" + enc(m), m) : "—");
       let html = '<div class="hero"><span class="kicker">League history</span><h1>Records</h1></div>' +
-        '<p class="note">Tap a date to open that game’s box score. Tap <b>Top 5</b> on any record to see the runners-up.</p>' +
+        '<p class="note">Tap a record to see the top 5. Tap a date to open that game’s box score.</p>' +
         '<div class="chips"><button type="button" class="chip" data-rec-all="open">Show all top 5s</button><button type="button" class="chip" data-rec-all="close">Collapse all</button></div>';
       let recId = 0;
       secs.forEach((sec) => {
-        html += section(sec, '<div class="scroll"><table class="records"><thead><tr><th scope="col">Record</th><th scope="col" class="num">Value</th><th scope="col">Manager</th><th scope="col">Detail</th><th scope="col">When</th></tr></thead>' +
+        html += section(sec, '<div class="scroll"><table class="records"><thead><tr><th scope="col">Record</th><th scope="col" class="num">Value</th><th scope="col">Manager</th><th scope="col">Detail</th><th scope="col">When</th><th scope="col" class="rec-tog-h"><span class="sr">Top 5</span></th></tr></thead>' +
           out.filter((o) => o.sec === sec).map((o) => {
             const id = "rec" + recId++;
             const [v, m, det, wh] = o.rows[0];
-            const more = o.rows.length > 1
-              ? ' <button type="button" class="rec-more" aria-expanded="false" aria-controls="' + id + '">Top ' + o.rows.length + "</button>" : "";
-            return '<tbody class="rec-group"><tr><td class="rec-label">' + esc(o.label) + more + '</td><td class="num rec-val">' + esc(v) + '</td><td class="name">' + mgrCell(m) +
-              '</td><td class="detail">' + det + '</td><td class="when">' + wh + "</td></tr></tbody>" +
+            const has = o.rows.length > 1;
+            const trOpen = has ? '<tr class="rec-row has-alts" tabindex="0" aria-expanded="false" aria-controls="' + id + '" title="Show top ' + o.rows.length + '">' : '<tr class="rec-row">';
+            return '<tbody class="rec-group">' + trOpen + '<td class="rec-label">' + esc(o.label) + '</td><td class="num rec-val">' + esc(v) + '</td><td class="name">' + mgrCell(m) +
+              '</td><td class="detail">' + det + '</td><td class="when">' + wh + '</td><td class="rec-tog" aria-hidden="true">' + (has ? "▾" : "") + "</td></tr></tbody>" +
               (o.rows.length > 1 ? '<tbody class="rec-alts" id="' + id + '" hidden>' + o.rows.slice(1).map((x, i) =>
                 '<tr class="alt"><td class="rec-rank">' + (i + 2) + '</td><td class="num">' + esc(x[0]) + '</td><td class="name">' + mgrCell(x[1]) +
-                '</td><td class="detail">' + x[2] + '</td><td class="when">' + x[3] + "</td></tr>").join("") + "</tbody>" : "");
+                '</td><td class="detail">' + x[2] + '</td><td class="when">' + x[3] + "</td><td></td></tr>").join("") + "</tbody>" : "");
           }).join("") + "</table></div>");
       });
 
@@ -1111,7 +1127,8 @@
       const head = '<div class="hero"><span class="kicker">Transactions</span><h1>Trades &amp; pickups</h1></div>' +
         '<div class="chips tabs">' + TRADE_VIEWS.map((v) => '<a class="chip' + (v[0] === view ? " on" : "") + '" href="#/' + go(yr, v[0], who) + '"' +
           (v[0] === view ? ' aria-current="page"' : "") + ">" + v[1] + "</a>").join("") + "</div>" +
-        chips(["All"].concat(yrs), yr, (y) => go(y, view, who));
+        filterBar([{ label: "Year", items: ["All"].concat(yrs).map((y) => [go(y, view, who), y === "All" ? "All years" : y]), current: go(yr, view, who) }]
+          .concat(view === "trades" ? [{ label: "Manager", items: [["", "Everyone"]].concat(ms.map((m) => [m, m])).map((x) => [go(yr, view, x[0]), x[1]]), current: go(yr, view, who) }] : []));
       const valueNote = '<p class="note"><b>Value</b> = points a player scored in your starting lineup, minus what a typical bench player at his position would have scored in those same starts. Theme-team weeks don’t count.</p>';
 
       /* ---------------- trades ---------------- */
@@ -1161,8 +1178,7 @@
             } },
           ], board, { sortKey: "net" })) : "") +
           section(who ? who + "’s trades" : "Every trade",
-            chips(["Everyone"].concat(board.map((o) => o.m)), who || "Everyone", (m) => go(yr, "trades", m === "Everyone" ? "" : m)) +
-            (shown.length ? '<div class="tl-list">' + shown.map(card).join("") + "</div>" : '<p class="note">No trades found.</p>'),
+            (shown.length ? '<div class="tl-list">' + shown.map(card).join("") + "</div>" : '<p class="empty">No trades ' + (yr === "All" ? "yet" : "in " + esc(yr)) + (who ? " for " + esc(who) : "") + ".</p>"),
             shown.length + " trade" + (shown.length === 1 ? "" : "s"));
       }
 
@@ -1335,11 +1351,12 @@
       const R = positionRanks(d, yr, pos, scope);
       const base = (y, p, sc) => "ranks/" + enc(y) + "/" + p + "/" + sc;
       const head = '<div class="hero"><span class="kicker">Position rankings</span><h1>' + esc(yr) + " " + esc(pos) + "s</h1></div>" +
-        '<div class="chips"><a class="chip" href="#/players">All players</a><a class="chip on" aria-current="page" href="#/' + base(yr, pos, scope) + '">Rankings</a></div>' +
-        chips(yrs, yr, (y) => base(y, pos, scope)) +
-        chips(RANK_POS, pos, (p) => base(yr, p, scope)) +
-        '<div class="chips"><a class="chip' + (scope === "reg" ? " on" : "") + '" href="#/' + base(yr, pos, "reg") + '">Weeks 1–14</a>' +
-        '<a class="chip' + (scope === "all" ? " on" : "") + '" href="#/' + base(yr, pos, "all") + '">Include playoffs</a></div>';
+        '<div class="chips tabs"><a class="chip" href="#/players">All players</a><a class="chip on" aria-current="page" href="#/' + base(yr, pos, scope) + '">Rankings</a></div>' +
+        filterBar([
+          { label: "Year", items: yrs.map((y) => [base(y, pos, scope), y]), current: base(yr, pos, scope) },
+          { label: "Position", type: "seg", items: RANK_POS.map((p) => [base(yr, p, scope), p]), current: base(yr, pos, scope) },
+          { label: "Weeks", items: [[base(yr, pos, "reg"), "Weeks 1–14"], [base(yr, pos, "all"), "Include playoffs"]], current: base(yr, pos, scope) },
+        ]);
       if (!R.list.length) return head + '<div class="state">No ' + esc(pos) + " data for " + esc(yr) + ".</div>";
 
       const thead = '<thead><tr><th scope="col" class="num">#</th><th scope="col">Player</th><th scope="col">Rostered by</th>' +
@@ -1379,7 +1396,7 @@
     return loadMany(["rosters", "positions"]).then((d) => {
       const list = playerIndex(d.rosters, d.positions).sort((a, b) => b.tot - a.tot);
       return '<div class="hero"><span class="kicker">NFL players</span><h1>Players</h1></div>' +
-        '<div class="chips"><a class="chip on" aria-current="page" href="#/players">All players</a><a class="chip" href="#/ranks">Rankings</a></div>' +
+        '<div class="chips tabs"><a class="chip on" aria-current="page" href="#/players">All players</a><a class="chip" href="#/ranks">Rankings</a></div>' +
         '<label class="search"><span>Search</span><input id="player-search" type="search" placeholder="Type a player or position (e.g. RB)" autocomplete="off"></label>' +
         '<p class="note">Every player who’s been on a roster in the league, by total points scored while rostered.</p>' +
         '<div class="scroll"><table class="plist"><thead><tr><th scope="col">Player</th><th scope="col">Pos</th><th scope="col" class="num">Seasons</th><th scope="col" class="num">Games</th><th scope="col" class="num">Total Pts</th></tr></thead><tbody>' +
@@ -1389,24 +1406,20 @@
     });
   }
 
+  const setRec = (tr, open) => {
+    tr.setAttribute("aria-expanded", String(open));
+    const box = document.getElementById(tr.getAttribute("aria-controls"));
+    if (box) box.hidden = !open;
+  };
   app.addEventListener("click", (e) => {
-    const one = e.target.closest(".rec-more");
-    if (one) {
-      const box = document.getElementById(one.getAttribute("aria-controls"));
-      const open = one.getAttribute("aria-expanded") !== "true";
-      one.setAttribute("aria-expanded", String(open));
-      if (box) box.hidden = !open;
-      return;
-    }
+    const tr = e.target.closest("tr.has-alts");
+    if (tr && !e.target.closest("a, button")) { setRec(tr, tr.getAttribute("aria-expanded") !== "true"); return; }
     const all = e.target.closest("[data-rec-all]");
-    if (all) {
-      const open = all.dataset.recAll === "open";
-      app.querySelectorAll(".rec-more").forEach((b) => {
-        b.setAttribute("aria-expanded", String(open));
-        const box = document.getElementById(b.getAttribute("aria-controls"));
-        if (box) box.hidden = !open;
-      });
-    }
+    if (all) app.querySelectorAll("tr.has-alts").forEach((t) => setRec(t, all.dataset.recAll === "open"));
+  });
+  app.addEventListener("keydown", (e) => {
+    const tr = e.target.closest && e.target.closest("tr.has-alts");
+    if (tr && e.target === tr && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setRec(tr, tr.getAttribute("aria-expanded") !== "true"); }
   });
 
   app.addEventListener("input", (e) => {
@@ -1736,7 +1749,7 @@
       return '<div class="hero"><span class="kicker">Collect them all</span><h1>' + esc(y) + " cards</h1></div>" +
         chips(yrs, y, (x) => "cards/" + x) +
         '<p class="note">Every rating is 40–99, based on where that person ranked in the league that season. <b>OVR</b> weights Scoring 35%, Lineups, Drafting and Waivers 15% each, and Trading and Luck 10% each. Gold 80+, silver 68+, bronze below. Tap a card for the breakdown.</p>' +
-        '<div class="cards">' + cards.map((c) => cardHtml(c, true)).join("") + "</div>";
+        (cards.length ? '<div class="cards">' + cards.map((c) => cardHtml(c, true)).join("") + "</div>" : '<p class="empty">No cards for ' + esc(y) + " yet.</p>");
     });
   }
 
@@ -1776,12 +1789,12 @@
         (w === wk ? ' aria-current="page"' : "") + ">" + esc(text) + "</a>";
       const head = '<div class="hero"><span class="kicker">Game log</span><h1>' + esc(yr) + " · " +
         esc(showBracket ? "Playoff bracket" : isRegularWeek(wk) ? "Week " + wk : wk) + "</h1></div>" +
-        chips(yrs, yr, (y) => "games/" + y) +
+        filterBar([{ label: "Year", items: yrs.map((y) => ["games/" + y, y]), current: "games/" + yr }]) +
         '<div class="chips weeks">' + weeks.map((w) => chip(w, label(w))).join("") + chip("bracket", "Bracket") + "</div>";
       if (showBracket) return head + (playoffBracket(d.games, yr) || '<div class="state">Not enough games yet to draw a bracket.</div>');
       return head +
         '<p class="note">Tap a game for both lineups.</p>' +
-        '<div class="scores">' + games.map((g) => scoreCard(g)).join("") + "</div>";
+        (games.length ? '<div class="scores">' + games.map((g) => scoreCard(g)).join("") + "</div>" : '<p class="empty">No scores entered for this week yet.</p>');
     });
   }
 
@@ -1841,6 +1854,28 @@
 
   /* ============================== router ============================== */
 
+  /* "More" menu in the nav (desktop only; phones show every link in a scrolling strip) */
+  function setMore(open) {
+    const btn = document.querySelector(".nav-more-btn");
+    if (!btn) return;
+    btn.setAttribute("aria-expanded", String(open));
+    document.querySelector(".nav-more").classList.toggle("open", open);
+  }
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".nav-more-btn");
+    if (btn) { setMore(btn.getAttribute("aria-expanded") !== "true"); return; }
+    if (!e.target.closest(".nav-more-menu")) setMore(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.querySelector(".nav-more.open")) { setMore(false); document.querySelector(".nav-more-btn").focus(); }
+  });
+
+  function skeleton() {
+    const block = (h) => '<div class="sk" style="height:' + h + 'px"></div>';
+    return '<div class="sk-wrap" role="status"><span class="sr">Loading the league sheet…</span>' +
+      '<div class="sk sk-kicker"></div><div class="sk sk-title"></div>' + block(44) + block(220) + block(160) + "</div>";
+  }
+
   function route() {
     const parts = (location.hash.replace(/^#\/?/, "") || "").split("/").map(decodeURIComponent);
     const name = parts[0] || "home";
@@ -1850,6 +1885,14 @@
       a.classList.toggle("active", on);
       if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
     });
+    const moreBtn = document.querySelector(".nav-more-btn");
+    if (moreBtn) {
+      moreBtn.classList.toggle("active", !!document.querySelector(".nav-more-menu a.active"));
+      setMore(false);
+    }
+    // keep the active link in view on the phone nav strip
+    const act = document.querySelector(".nav a.active");
+    if (act && act.scrollIntoView && window.matchMedia("(max-width: 700px)").matches) act.scrollIntoView({ block: "nearest", inline: "center" });
     let p;
     if (name === "season") p = pageSeason(parts[1]);
     else if (name === "career") p = pageCareer(parts[1]);
@@ -1866,13 +1909,16 @@
     else if (name === "player") p = pagePlayer(parts[1]);
     else if (name === "game") p = pageGame(parts[1], parts[2], parts[3], parts[4]);
     else p = pageHome();
-    if (!app.innerHTML) app.innerHTML = '<div class="state">Loading…</div>';
+    if (!app.innerHTML) app.innerHTML = skeleton();
+    app.classList.add("busy");
+    app.setAttribute("aria-busy", "true");
     p.then((html) => { app.innerHTML = html; })
       .catch((err) => {
         console.error(err);
         app.innerHTML = '<div class="state err">Couldn’t load data from the league sheet (' + esc(err.message) +
           '). Check that the sheet is shared as “Anyone with the link can view.”</div>';
-      });
+      })
+      .finally(() => { app.classList.remove("busy"); app.removeAttribute("aria-busy"); });
   }
 
   let lastName = null;
