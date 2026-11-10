@@ -680,8 +680,143 @@
     });
   }
 
+  /* ============================== best lineups / all-time teams ============================== */
+
+  const LINEUP_SLOTS = [["QB", ["QB"]], ["RB", ["RB"]], ["RB", ["RB"]], ["WR", ["WR"]], ["WR", ["WR"]], ["TE", ["TE"]], ["FLEX", ["RB", "WR", "TE"]], ["K", ["K"]], ["DEF", ["DEF"]]];
+
+  // candidates: [{ name, pos, val, ...extra }] — fills each slot with the best unused player who fits
+  // players with 4+ games come first; shorter stints only fill slots that would otherwise be empty
+  function fillLineup(cands) {
+    const used = new Set();
+    const sorted = cands.slice().sort((a, b) => b.val - a.val);
+    const full = sorted.filter((x) => !x.gp || x.gp >= 4), part = sorted.filter((x) => x.gp && x.gp < 4);
+    const out = LINEUP_SLOTS.map(([slot, ok]) => {
+      const c = full.find((x) => ok.includes(x.pos) && !used.has(x.name));
+      if (c) used.add(c.name);
+      return { slot: slot, ok: ok, c: c };
+    });
+    out.forEach((x) => {
+      if (x.c) return;
+      x.c = part.find((y) => x.ok.includes(y.pos) && !used.has(y.name));
+      if (x.c) used.add(x.c.name);
+    });
+    return out;
+  }
+
+  const countsOk = (r) => r.Counts === undefined || r.Counts === "" || r.Counts === "Yes";
+  const playedRow = (r) => isNum(r.Points) && !(num(r.Points) === 0 && (!isNum(r["Proj Pts"]) || num(r["Proj Pts"]) === 0));
+
+  // best seasons: points per game while on the roster (weeks 1-14, 4+ games). who = a manager, or "" for the whole league.
+  function seasonCands(d, who) {
+    const posOf = posLookup(d);
+    const by = {};
+    d.rosters.forEach((r) => {
+      if (!r.Player || r.Player === "(Empty)" || !isNum(r.Week) || +r.Week > 14 || !countsOk(r) || !playedRow(r)) return;
+      if (who && r.Manager !== who) return;
+      const k = r.Year + "|" + r.Player + "|" + (who ? "" : r.Manager);
+      const o = (by[k] = by[k] || { name: r.Player, pos: posOf[r.Player], y: r.Year, m: r.Manager, gp: 0, tot: 0 });
+      o.gp++; o.tot += num(r.Points);
+    });
+    const best = {};
+    Object.values(by).filter((o) => o.gp >= (who ? 1 : 4) && o.pos).forEach((o) => {
+      o.val = o.tot / o.gp;
+      if (!best[o.name] || o.val > best[o.name].val) best[o.name] = o;   // a player's single best season
+    });
+    return Object.values(best);
+  }
+
+  // best single weeks (started only)
+  function weekCands(d, who) {
+    const posOf = posLookup(d);
+    const best = {};
+    d.rosters.forEach((r) => {
+      if (!r.Player || r.Player === "(Empty)" || r.Started !== "Yes" || !isNum(r.Points) || !isNum(r.Week) || !countsOk(r)) return;
+      if (who && r.Manager !== who) return;
+      const pos = posOf[r.Player];
+      if (!pos) return;
+      const v = num(r.Points);
+      if (!best[r.Player] || v > best[r.Player].val) best[r.Player] = { name: r.Player, pos: pos, y: r.Year, w: r.Week, m: r.Manager, val: v };
+    });
+    return Object.values(best);
+  }
+
+  function lineupTable(lineup, kind, showMgr) {
+    const total = lineup.reduce((t, x) => t + (x.c ? x.c.val : 0), 0);
+    return '<div class="scroll"><table class="lineup-tbl"><thead><tr><th scope="col">Slot</th><th scope="col">Player</th>' + (showMgr ? '<th scope="col">Manager</th>' : "") +
+      '<th scope="col" class="num">' + (kind === "season" ? "Year" : "When") + '</th><th scope="col" class="num">' + (kind === "season" ? "PPG" : "Pts") + "</th></tr></thead><tbody>" +
+      lineup.map((x) => '<tr><td class="slot">' + esc(x.slot) + "</td>" + (x.c
+        ? '<td class="name">' + plink(x.c.name) + (x.slot === "FLEX" ? ' <span class="tag">' + esc(x.c.pos) + "</span>" : "") + "</td>" +
+          (showMgr ? '<td class="name">' + link("career/" + enc(x.c.m), x.c.m) + "</td>" : "") +
+          '<td class="num">' + (kind === "season" ? esc(x.c.y) + (x.c.gp < 4 ? ' <span class="muted" title="Only ' + x.c.gp + ' games">*</span>' : "") : esc(x.c.y) + " · Wk " + esc(x.c.w)) + "</td>" +
+          '<td class="num rec-val">' + x.c.val.toFixed(kind === "season" ? 1 : 2) + "</td>"
+        : '<td colspan="' + (showMgr ? 4 : 3) + '" class="muted">Nobody yet</td>') + "</tr>").join("") +
+      '<tr class="lineup-total"><td colspan="' + (showMgr ? 4 : 3) + '">Total</td><td class="num rec-val">' + total.toFixed(1) + "</td></tr></tbody></table></div>" +
+      (lineup.some((x) => x.c && x.c.gp && x.c.gp < 4) ? '<p class="note">* Fewer than 4 games, used only to fill an empty slot.</p>' : "");
+  }
+
+  function pageAllTime() {
+    return loadMany(["rosters", "positions"]).then((d) => {
+      return '<div class="hero"><span class="kicker">League history</span><h1>All-time teams</h1></div>' +
+        '<p class="note">The best lineup you could build from every player who’s been on a league roster. Each player appears once, at his best. ' + link("records", "← Records") + "</p>" +
+        section("Best seasons", lineupTable(fillLineup(seasonCands(d, "")), "season", true), "Points per game, weeks 1–14, 4+ games") +
+        section("Best single weeks", lineupTable(fillLineup(weekCands(d, "")), "week", true), "Starters only");
+    });
+  }
+
+  /* ---------- manager profile pieces ---------- */
+  function playingStyle(d, p) {
+    const ms = uniq(d.standings.map((r) => r.Player)).filter(Boolean);
+    const seasons = (m) => Math.max(1, uniq(d.standings.filter((r) => r.Player === m).map((r) => r.Year)).length);
+    const per = (m, f) => d.moves.filter((r) => r.Manager === m && f(r)).length / seasons(m);
+    const stat = {};
+    ms.forEach((m) => {
+      const lu = d.lineups.filter((r) => r.Manager === m && isNum(r.Week) && +r.Week <= 14 && isNum(r.Efficiency));
+      const tradesN = uniq(d.moves.filter((r) => r.Manager === m && r["How Acquired"] === "Trade").map((r) => r.Year + "|" + r["First Week"] + "|" + r.From)).length / seasons(m);
+      stat[m] = { trades: tradesN, adds: per(m, (r) => r["How Acquired"] === "Waiver"),
+        eff: lu.length ? lu.reduce((t, r) => t + num(r.Efficiency), 0) / lu.length : NaN,
+        draft: d.moves.filter((r) => r.Manager === m && r["How Acquired"] === "Draft").reduce((t, r) => t + (num(r.Value) || 0), 0) / seasons(m),
+        luck: d.standings.filter((r) => r.Player === m && isNum(r.Luck)).reduce((t, r) => t + num(r.Luck), 0) };
+    });
+    const avg = (k) => { const v = ms.map((m) => stat[m][k]).filter((x) => !isNaN(x)); return v.reduce((a, b) => a + b, 0) / (v.length || 1); };
+    const rank = (k) => ms.filter((m) => !isNaN(stat[m][k])).sort((a, b) => stat[b][k] - stat[a][k]).indexOf(p) + 1;
+    const me = stat[p];
+    if (!me) return "";
+    const tags = [];
+    if (me.trades >= avg("trades") * 1.4 && me.trades >= 1) tags.push(["Wheeler-dealer", "makes " + me.trades.toFixed(1) + " trades a season (league average " + avg("trades").toFixed(1) + ")"]);
+    else if (me.trades <= avg("trades") * 0.5) tags.push(["Doesn’t trade", "only " + me.trades.toFixed(1) + " trades a season"]);
+    if (me.adds >= avg("adds") * 1.25) tags.push(["Waiver hawk", me.adds.toFixed(0) + " pickups a season (average " + avg("adds").toFixed(0) + ")"]);
+    else if (me.adds <= avg("adds") * 0.75) tags.push(["Set and forget", "only " + me.adds.toFixed(0) + " pickups a season"]);
+    const er = rank("eff"), dr = rank("draft"), lr = rank("luck"), n = ms.length;
+    if (er && er <= 2) tags.push(["Lineup sharp", "#" + er + " in lineup efficiency (" + pct(me.eff, 1) + ")"]);
+    else if (er && er >= n - 1) tags.push(["Bench blunderer", "#" + er + " of " + n + " in lineup efficiency"]);
+    if (dr && dr <= 2) tags.push(["Draft-day ace", "#" + dr + " in draft value per season"]);
+    else if (dr && dr >= n - 1) tags.push(["Draft-day disaster", "#" + dr + " of " + n + " in draft value"]);
+    if (lr === 1) tags.push(["Lucky", "the league’s luckiest manager (" + signed(me.luck, 1) + " wins from luck)"]);
+    else if (lr === n) tags.push(["Snakebitten", "the league’s unluckiest manager (" + signed(me.luck, 1) + " wins from luck)"]);
+    if (!tags.length) tags.push(["Balanced", "right around league average at everything"]);
+    return '<div class="style-tags">' + tags.map((t) => '<div class="style-tag"><b>' + esc(t[0]) + "</b><span>" + esc(t[1]) + "</span></div>").join("") + "</div>";
+  }
+
+  function trophyCase(d, p) {
+    const st = d.standings.filter((r) => r.Player === p && isNum(r.Place));
+    const lastOf = (y) => Math.max.apply(null, d.standings.filter((r) => r.Year === y && isNum(r.Place)).map((r) => num(r.Place)));
+    const titles = st.filter((r) => num(r.Place) === 1).map((r) => r.Year).sort();
+    const seconds = st.filter((r) => num(r.Place) === 2).map((r) => r.Year).sort();
+    const thirds = st.filter((r) => num(r.Place) === 3).map((r) => r.Year).sort();
+    const lasts = st.filter((r) => num(r.Place) === lastOf(r.Year)).map((r) => r.Year).sort();
+    const held = recordList(d).filter((o) => o.rows[0] && o.rows[0][1] === p);
+    const shelf = (cls, label, yrs) => yrs.length ? '<div class="trophy ' + cls + '"><span class="t-n">' + yrs.length + '</span><span class="t-l">' + esc(label) + '</span><span class="t-y">' + yrs.map(esc).join(" · ") + "</span></div>" : "";
+    const cups = shelf("gold", yrs1(titles.length, "Title"), titles) + shelf("silver", yrs1(seconds.length, "Runner-up"), seconds) + shelf("bronze", "3rd place", thirds) + shelf("last", yrs1(lasts.length, "Last-place finish"), lasts);
+    return (cups ? '<div class="trophies">' + cups + "</div>" : '<p class="empty">No hardware yet.</p>') +
+      heldList("Records held", held.filter((o) => !DUBIOUS.test(o.label))) + heldList("Dubious honors", held.filter((o) => DUBIOUS.test(o.label)));
+  }
+  const yrs1 = (n, w) => (n === 1 ? w : w + "s");
+  const DUBIOUS = /lowest|worst|losing|fewest|unluck|points against|bench|self-inflicted|zero-point|on a bye|upset loss|under projection|last-place|drought|without a title|bad beat|volatile|hurt|bust/i;
+  const heldList = (title, list) => (list.length ? '<h3 class="held-h">' + esc(title) + " (" + list.length + ")</h3>" + '<ul class="held' + (/dubious/i.test(title) ? " bad" : "") + '">' +
+    list.map((o) => "<li>" + link("records", o.label) + ' <span class="num">' + esc(o.rows[0][0]) + "</span></li>").join("") + "</ul>" : "");
+
   function pageCareer(pArg) {
-    return loadMany(["allTime", "standings", "allGames", "mvps", "elo", "projections", "moves", "lineups"]).then((d) => {
+    return loadMany(uniq(["allTime", "elo"].concat(RECORD_TABS))).then((d) => {
       const ms = managers(d.allTime);
       const p = ms.includes(pArg) ? pArg : ms[0];
       const at = d.allTime.find((r) => r.Player === p) || {};
@@ -698,6 +833,10 @@
         tile("Avg Finish", esc(at["Avg Finish"] || "—")) +
         tile("Pts / Game", fmt(at["Pts/Game"])) +
         tile("Career High", fmt(at["Career High"])) + "</div>");
+      html.push('<div class="grid-2 even">' + section("Trophy case", trophyCase(d, p)) + section("Playing style", playingStyle(d, p), "Compared with the rest of the league") + "</div>");
+      html.push(section("Best-ever lineup", '<div class="grid-2 even"><div><h3 class="sub-h">Best seasons</h3>' + lineupTable(fillLineup(seasonCands(d, p)), "season", false) +
+        '</div><div><h3 class="sub-h">Best single weeks</h3>' + lineupTable(fillLineup(weekCands(d, p)), "week", false) + "</div></div>",
+        "Built only from players " + esc(p) + " rostered · " + link("alltime", "League all-time team →")));
 
       const st = d.standings.filter((r) => r.Player === p);
       const cols = standingsCols().slice(1);
@@ -782,8 +921,16 @@
 
   /* ============================== records ============================== */
 
-  function pageRecords() {
-    return loadMany(["allGames", "standings", "lineups", "projections", "rosters", "positions", "moves", "mvps"]).then((d) => {
+  const RECORD_TABS = ["allGames", "standings", "lineups", "projections", "rosters", "positions", "moves", "mvps"];
+  function pageRecords() { return loadMany(RECORD_TABS).then((d) => buildRecords(d, false)); }
+  // onlyOut = just return the list of records (used by Career for "records held")
+  const recordsCache = new WeakMap();
+  function recordList(d) {
+    if (!recordsCache.has(d.allGames)) recordsCache.set(d.allGames, buildRecords(d, true));
+    return recordsCache.get(d.allGames);
+  }
+  function buildRecords(d, onlyOut) {
+    {
       const ag = d.allGames.filter((r) => r.Player && isNum(r.Points) && isNum(r["Opp Points"]));
       // year|rosterWeek|manager -> game (week label + opponent), so any record can link to its box score
       const gameAt = {};
@@ -1078,11 +1225,12 @@
       const ORDER = ["Game records", "Season records", "Hall of Fame", "Streaks", "Rivalries", "Lineup records", "Transactions", "Projections"];
       out.sort((a, b) => ORDER.indexOf(a.sec) - ORDER.indexOf(b.sec));
 
+      if (onlyOut) return out;
       /* --- render the record sections --- */
       const secs = uniq(out.map((o) => o.sec));
       const mgrCell = (m) => (m ? link("career/" + enc(m), m) : "—");
       let html = '<div class="hero"><span class="kicker">League history</span><h1>Records</h1></div>' +
-        '<p class="note">Tap a record to see the top 5. Tap a date to open that game’s box score.</p>' +
+        '<p class="note">Tap a record to see the top 5. Tap a date to open that game’s box score. ' + link("alltime", "All-time teams →") + "</p>" +
         '<div class="chips"><button type="button" class="chip" data-rec-all="open">Show all top 5s</button><button type="button" class="chip" data-rec-all="close">Collapse all</button></div>';
       let recId = 0;
       secs.forEach((sec) => {
@@ -1118,7 +1266,7 @@
           '</td><td class="when">' + whenRW(t.r.Year, t.r.Week, t.r.Manager) + "</td></tr>").join("") + "</tbody></table></div>",
         "Started players · Bench = best games left on a bench");
       return html;
-    });
+    }
   }
   const wins_ = (rec) => wins(rec);
 
@@ -2266,7 +2414,7 @@
     const parts = (location.hash.replace(/^#\/?/, "") || "").split("/").map(decodeURIComponent);
     const name = parts[0] || "home";
     document.querySelectorAll(".nav a").forEach((a) => {
-      const navOf = { player: "players", ranks: "players", game: "games", card: "cards", recap: "games", preview: "games" };
+      const navOf = { player: "players", ranks: "players", game: "games", card: "cards", recap: "games", preview: "games", alltime: "records" };
       const on = a.dataset.route === (navOf[name] || name);
       a.classList.toggle("active", on);
       if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
@@ -2289,6 +2437,7 @@
     else if (name === "trades") p = pageTrades(parts[1], parts[2], parts[3]);
     else if (name === "check") p = pageCheck();
     else if (name === "recap") p = pageRecap(parts[1], parts[2]);
+    else if (name === "alltime") p = pageAllTime();
     else if (name === "preview") p = pagePreview();
     else if (name === "players") p = pagePlayers();
     else if (name === "ranks") p = pageRanks(parts[1], parts[2], parts[3]);

@@ -589,3 +589,27 @@ table.recap-st tbody tr:nth-child(6) td { border-bottom: 3px solid var(--amber);
   .pv-stats dd { font-size: 17px; }
   .pv-stake { font-size: 14px; }
 }
+
+/* ---------- profiles + all-time teams ---------- */
+.grid-2.even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 900px) { .grid-2.even { grid-template-columns: minmax(0, 1fr); } }
+.trophies { display: flex; flex-wrap: wrap; gap: 10px; }
+.trophy { flex: 1 1 140px; display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; background: #111311; border: 3px solid #C77B3B; }
+.trophy.gold { border-color: var(--amber); } .trophy.silver { border-color: #C9CED6; } .trophy.last { border-color: var(--endzone); background: rgba(122,31,31,0.35); }
+.t-n { font-family: var(--mono); font-size: 40px; line-height: 1; color: var(--amber); }
+.trophy.silver .t-n { color: #E3E7EC; } .trophy.bronze .t-n { color: #E0A070; } .trophy.last .t-n { color: var(--loss); }
+.t-l { font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; font-size: 15px; }
+.t-y { font-family: var(--mono); color: var(--chalk-dim); font-size: 15px; }
+.held-h, .sub-h { margin: 16px 0 8px; font-size: 17px; letter-spacing: 0.12em; color: var(--amber); }
+.sub-h { margin-top: 0; }
+.held { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.held li { background: var(--panel); border: 1px solid var(--line); padding: 4px 10px; font-size: 16px; }
+.held li .num { font-family: var(--mono); color: var(--amber); margin-left: 4px; }
+.style-tags { display: flex; flex-direction: column; gap: 8px; }
+.style-tag { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 10px 14px; background: var(--panel); border-left: 4px solid var(--amber); }
+.style-tag b { font-size: 20px; text-transform: uppercase; letter-spacing: 0.06em; }
+.style-tag span { color: var(--chalk-dim); font-size: 16px; }
+table.lineup-tbl td.slot { font-family: var(--mono); color: var(--amber); width: 60px; }
+table.lineup-tbl tr.lineup-total td { border-top: 3px solid var(--amber); font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; }
+.held.bad li { border-color: rgba(255,154,138,0.4); }
+.held.bad li .num { color: var(--loss); }
